@@ -1,0 +1,32 @@
+{
+  "name": "@gym/db",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "prisma"
+  ],
+  "scripts": {
+    "generate": "prisma generate",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src prisma/seed.ts",
+    "migrate:deploy": "node scripts/as-owner.mjs prisma migrate deploy",
+    "migrate:reset": "node scripts/as-owner.mjs prisma migrate reset --force",
+    "seed": "node scripts/with-env.mjs tsx prisma/seed.ts",
+    "migrate:new": "node scripts/new-migration.mjs"
+  },
+  "dependencies": {
+    "@gym/shared": "workspace:*",
+    "@prisma/client": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

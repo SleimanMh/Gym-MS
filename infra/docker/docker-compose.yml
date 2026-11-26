@@ -1,0 +1,102 @@
+# Local environment (PLAN.md section 13).
+#   Backing services only:   docker compose -f infra/docker/docker-compose.yml up -d
+#   Everything in Docker:    docker compose -f infra/docker/docker-compose.yml --profile app up -d --build
+name: gym-saas
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    # Host port 5433 so it doesn't clash with a Postgres already installed on the machine.
+    ports: ["5433:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      KC_HTTP_PORT: 8080
+      KC_HEALTH_ENABLED: "true"
+    ports: ["8080:8080"]
+    volumes:
+      - ../keycloak/realm-gym.json:/opt/keycloak/data/import/realm-gym.json:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio_dev_secret
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [miniodata:/data]
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["1025:1025", "8025:8025"]
+
+  # ── Application images (profile "app") ─────────────────────────────
+  api:
+    profiles: ["app"]
+    build: { context: ../.., dockerfile: infra/docker/api.Dockerfile }
+    environment: &app-env
+      NODE_ENV: development
+      DATABASE_URL: postgresql://gym_app:gym_app_dev@postgres:5432/gym?schema=public
+      DATABASE_OWNER_URL: postgresql://gym_owner:gym_owner_dev@postgres:5432/gym?schema=public
+      REDIS_URL: redis://redis:6379
+      ADMIN_ORIGINS: http://localhost:3000
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/gym
+      AUTH_DEV_TOKENS: "true"
+      DEV_JWT_SECRET: change-me-dev-only-secret-at-least-32-chars
+      MEMBER_JWT_SECRET: change-me-member-session-secret-32-chars-min
+      SMTP_URL: smtp://mailpit:1025
+      PUBLIC_APP_URL: http://localhost:3000
+    ports: ["4000:4000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    profiles: ["app"]
+    build: { context: ../.., dockerfile: infra/docker/api.Dockerfile }
+    command: ["node", "apps/api/dist/worker.js"]
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  admin:
+    profiles: ["app"]
+    build: { context: ../.., dockerfile: infra/docker/admin.Dockerfile }
+    environment:
+      API_URL: http://api:4000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  miniodata:

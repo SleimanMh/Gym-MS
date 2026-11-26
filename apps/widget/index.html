@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IronFit Gym — example website</title>
+    <style>
+      /* A deliberately different website style: the widget must not inherit any of it. */
+      body { margin: 0; font-family: Georgia, serif; background: #111827; color: #f9fafb; }
+      header { padding: 40px 24px; text-align: center; }
+      header h1 { margin: 0 0 8px; font-size: 40px; letter-spacing: 2px; }
+      main { max-width: 720px; margin: 0 auto; padding: 0 16px 48px; display: grid; gap: 24px; }
+      button, input { all: unset; } /* hostile global reset */
+      h2 { color: #fbbf24; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>IRONFIT</h1>
+      <p>This page stands in for a gym's own website. The widget below is the only part we provide.</p>
+    </header>
+    <main>
+      <h2>Class schedule</h2>
+      <gym-schedule api-key="pk_dev_ironfit_publishable_key_0001" api="http://localhost:4000"></gym-schedule>
+      <h2>Free trial</h2>
+      <gym-lead-form api-key="pk_dev_ironfit_publishable_key_0001" api="http://localhost:4000"></gym-lead-form>
+    </main>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

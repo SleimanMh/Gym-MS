@@ -1,0 +1,976 @@
+// Gym SaaS — core data model (PLAN.md section 9). Phase 0: platform, tenant setup, identity, audit.
+//
+// Tenancy rules (CLAUDE.md):
+// - Every tenant-owned table has tenant_id UUID NOT NULL, an index, a FK to tenants, and an RLS policy
+//   (see migrations/*_rls/migration.sql).
+// - Unique constraints include tenant_id.
+// - Platform tables (tenants, plans, features, ...) and the global `users` table are NOT tenant-owned.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Runtime: gym_app (no RLS bypass). Migrations/seed swap in DATABASE_OWNER_URL via scripts/as-owner.mjs.
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Platform ─────────────────────────────
+
+enum TenantStatus {
+  trial
+  active
+  past_due
+  read_only
+  suspended
+  cancelled
+}
+
+enum Language {
+  en
+  ar
+}
+
+model Tenant {
+  id              String       @id @default(uuid(7)) @db.Uuid
+  slug            String       @unique
+  name            String
+  status          TenantStatus @default(trial)
+  defaultLanguage Language     @default(en) @map("default_language")
+  timezone        String       @default("Asia/Beirut")
+  currency        String       @default("USD") @db.Char(3)
+  customDomain    String?      @unique @map("custom_domain")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  subscriptions    TenantSubscription[]
+  featureOverrides TenantFeatureOverride[]
+  settings         TenantSettings?
+  locations        Location[]
+  rooms            Room[]
+  apiKeys          ApiKey[]
+  allowedOrigins   AllowedOrigin[]
+  memberships      TenantMembership[]
+  userRoles        UserRole[]
+  auditLogs        AuditLog[]
+
+  @@map("tenants")
+}
+
+model Plan {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  code      String   @unique
+  name      String
+  isPublic  Boolean  @default(true) @map("is_public")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  features      PlanFeature[]
+  subscriptions TenantSubscription[]
+
+  @@map("plans")
+}
+
+enum FeatureKind {
+  feature
+  limit
+}
+
+model Feature {
+  key         String      @id
+  kind        FeatureKind
+  description String
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  planFeatures PlanFeature[]
+  overrides    TenantFeatureOverride[]
+
+  @@map("features")
+}
+
+model PlanFeature {
+  planId     String  @map("plan_id") @db.Uuid
+  featureKey String  @map("feature_key")
+  enabled    Boolean @default(true)
+  /// For limit features. NULL = unlimited.
+  limitValue Int?    @map("limit_value")
+
+  plan    Plan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  feature Feature @relation(fields: [featureKey], references: [key])
+
+  @@id([planId, featureKey])
+  @@map("plan_features")
+}
+
+enum SubscriptionStatus {
+  trialing
+  active
+  past_due
+  cancelled
+}
+
+model TenantSubscription {
+  id               String             @id @default(uuid(7)) @db.Uuid
+  tenantId         String             @map("tenant_id") @db.Uuid
+  planId           String             @map("plan_id") @db.Uuid
+  status           SubscriptionStatus @default(trialing)
+  billingInterval  String             @default("month") @map("billing_interval")
+  currentPeriodEnd DateTime?          @map("current_period_end") @db.Timestamptz(3)
+  trialEndsAt      DateTime?          @map("trial_ends_at") @db.Timestamptz(3)
+  /// Only one current subscription per tenant; older rows stay for history.
+  isCurrent        Boolean            @default(true) @map("is_current")
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan   Plan   @relation(fields: [planId], references: [id])
+
+  @@index([tenantId])
+  @@map("tenant_subscriptions")
+}
+
+model TenantFeatureOverride {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  featureKey String    @map("feature_key")
+  /// NULL for limit overrides.
+  enabled    Boolean?
+  limitValue Int?      @map("limit_value")
+  reason     String?
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  feature Feature @relation(fields: [featureKey], references: [key])
+
+  @@unique([tenantId, featureKey])
+  @@map("tenant_feature_overrides")
+}
+
+enum PlatformRole {
+  super_admin
+  support
+}
+
+model PlatformUser {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  userId    String       @unique @map("user_id") @db.Uuid
+  role      PlatformRole
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("platform_users")
+}
+
+// ───────────────────────────── Identity (global) ─────────────────────────────
+
+/// Global person record. One user can belong to several tenants via tenant_memberships.
+model User {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  /// `sub` from the identity provider (Keycloak), or "dev|<email>" for development tokens.
+  authSubject String?   @unique @map("auth_subject")
+  email       String    @unique
+  firstName   String    @map("first_name")
+  lastName    String    @map("last_name")
+  phone       String?
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  platformUser PlatformUser?
+  memberships  TenantMembership[]
+  roles        UserRole[]
+
+  @@map("users")
+}
+
+// ───────────────────────────── Tenant setup (RLS) ─────────────────────────────
+
+model TenantSettings {
+  tenantId              String   @id @map("tenant_id") @db.Uuid
+  logoUrl               String?  @map("logo_url")
+  primaryColor          String   @default("#2563EB") @map("primary_color")
+  taxRateBasisPoints    Int      @default(0) @map("tax_rate_bp")
+  bookingWindowDays     Int      @default(7) @map("booking_window_days")
+  cancellationCutoffMin Int      @default(120) @map("cancellation_cutoff_min")
+  poweredByVisible      Boolean  @default(true) @map("powered_by_visible")
+  // Booking policy (PLAN.md section 6.1). Tenant-wide for the MVP.
+  lateCancelPolicy         LateCancelPolicy @default(lose_credit) @map("late_cancel_policy")
+  waitlistAutoPromote      Boolean          @default(true) @map("waitlist_auto_promote")
+  /// Stop auto-promoting from the waitlist this many minutes before class.
+  waitlistPromoteCutoffMin Int              @default(60) @map("waitlist_promote_cutoff_min")
+  /// Class reminder this many minutes before start.
+  reminderLeadMin          Int              @default(120) @map("reminder_lead_min")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_settings")
+}
+
+model Location {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  slug      String
+  name      String
+  timezone  String?
+  address   String?
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rooms     Room[]
+  schedules Schedule[]
+  sessions  Session[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("locations")
+}
+
+model Room {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  locationId String    @map("location_id") @db.Uuid
+  name       String
+  capacity   Int?
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, locationId, name])
+  @@index([tenantId])
+  @@map("rooms")
+}
+
+enum ApiKeyType {
+  publishable
+  secret
+}
+
+model ApiKey {
+  id         String     @id @default(uuid(7)) @db.Uuid
+  tenantId   String     @map("tenant_id") @db.Uuid
+  type       ApiKeyType
+  name       String
+  /// First characters of the key, shown in the UI (e.g. "pk_live_ab12").
+  prefix     String
+  /// SHA-256 of the full key. The key itself is never stored.
+  keyHash    String     @unique @map("key_hash")
+  lastUsedAt DateTime?  @map("last_used_at") @db.Timestamptz(3)
+  revokedAt  DateTime?  @map("revoked_at") @db.Timestamptz(3)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+model AllowedOrigin {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  origin    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, origin])
+  @@index([tenantId])
+  @@map("allowed_origins")
+}
+
+enum MembershipStatus {
+  invited
+  active
+  disabled
+}
+
+/// Links a global user to a tenant. Roles live in user_roles.
+model TenantMembership {
+  id        String           @id @default(uuid(7)) @db.Uuid
+  tenantId  String           @map("tenant_id") @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  status    MembershipStatus @default(active)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+  @@map("tenant_memberships")
+}
+
+/// Role assignment, optionally scoped to one location (PLAN.md section 5).
+model UserRole {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  roleKey    String   @map("role_key")
+  /// NULL = all locations.
+  locationId String?  @map("location_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, roleKey, locationId])
+  @@index([tenantId])
+  @@map("user_roles")
+}
+
+/// Who changed prices, refunded, deleted, exported or impersonated (PLAN.md section 14).
+model AuditLog {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  data       Json?
+  ip         String?
+  requestId  String?  @map("request_id")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}
+
+// ═════════════════════════════ Phase 1 — MVP ═════════════════════════════
+// Every model below is tenant-owned: RLS, FK to tenants and same-tenant composite FKs are added
+// in the hand-written *_phase1_rls migration (Prisma can't model them).
+
+enum LateCancelPolicy {
+  none
+  lose_credit
+}
+
+// ───────────── Catalogue and scheduling ─────────────
+
+model ClassType {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  name            String
+  description     String?
+  color           String    @default("#2563EB")
+  durationMin     Int       @default(60) @map("duration_min")
+  defaultCapacity Int       @default(20) @map("default_capacity")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  schedules Schedule[]
+  sessions  Session[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("class_types")
+}
+
+/// Recurring weekly template. Sessions are generated from it a few weeks ahead.
+model Schedule {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  locationId    String    @map("location_id") @db.Uuid
+  classTypeId   String    @map("class_type_id") @db.Uuid
+  roomId        String?   @map("room_id") @db.Uuid
+  trainerUserId String?   @map("trainer_user_id") @db.Uuid
+  /// 0 = Sunday … 6 = Saturday, in the location's time zone.
+  weekday       Int
+  /// Minutes after local midnight (18:30 → 1110).
+  startMinute   Int       @map("start_minute")
+  durationMin   Int       @map("duration_min")
+  capacity      Int
+  validFrom     DateTime  @map("valid_from") @db.Date
+  validUntil    DateTime? @map("valid_until") @db.Date
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  location  Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  classType ClassType @relation(fields: [classTypeId], references: [id])
+  sessions  Session[]
+
+  @@index([tenantId])
+  @@map("schedules")
+}
+
+enum SessionStatus {
+  scheduled
+  cancelled
+}
+
+model Session {
+  id            String        @id @default(uuid(7)) @db.Uuid
+  tenantId      String        @map("tenant_id") @db.Uuid
+  locationId    String        @map("location_id") @db.Uuid
+  classTypeId   String        @map("class_type_id") @db.Uuid
+  roomId        String?       @map("room_id") @db.Uuid
+  trainerUserId String?       @map("trainer_user_id") @db.Uuid
+  scheduleId    String?       @map("schedule_id") @db.Uuid
+  startsAt      DateTime      @map("starts_at") @db.Timestamptz(3)
+  endsAt        DateTime      @map("ends_at") @db.Timestamptz(3)
+  capacity      Int
+  /// Active bookings (booked + attended). Changed only while holding a row lock on the session.
+  bookedCount   Int           @default(0) @map("booked_count")
+  status        SessionStatus @default(scheduled)
+  cancelReason  String?       @map("cancel_reason")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  location  Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  classType ClassType       @relation(fields: [classTypeId], references: [id])
+  schedule  Schedule?       @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  bookings  Booking[]
+  waitlist  WaitlistEntry[]
+
+  @@unique([tenantId, scheduleId, startsAt])
+  @@index([tenantId, startsAt])
+  @@map("sessions")
+}
+
+model Holiday {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  /// NULL = every location.
+  locationId String?  @map("location_id") @db.Uuid
+  date       DateTime @db.Date
+  name       String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([tenantId, date])
+  @@map("holidays")
+}
+
+// ───────────── Members and memberships ─────────────
+
+enum MemberStatus {
+  active
+  archived
+}
+
+enum Gender {
+  female
+  male
+}
+
+model Member {
+  id                    String       @id @default(uuid(7)) @db.Uuid
+  tenantId              String       @map("tenant_id") @db.Uuid
+  /// Login link (Keycloak user), set when the member claims an account.
+  userId                String?      @map("user_id") @db.Uuid
+  firstName             String       @map("first_name")
+  lastName              String       @map("last_name")
+  email                 String?
+  phone                 String?
+  dateOfBirth           DateTime?    @map("date_of_birth") @db.Date
+  gender                Gender?
+  emergencyContactName  String?      @map("emergency_contact_name")
+  emergencyContactPhone String?      @map("emergency_contact_phone")
+  language              Language?
+  homeLocationId        String?      @map("home_location_id") @db.Uuid
+  /// Random token encoded in the member's check-in QR code.
+  checkinCode           String       @map("checkin_code")
+  status                MemberStatus @default(active)
+  notes                 String?
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt             DateTime?    @map("deleted_at") @db.Timestamptz(3)
+
+  subscriptions MemberSubscription[]
+  bookings      Booking[]
+  waitlist      WaitlistEntry[]
+  checkIns      CheckIn[]
+  payments      Payment[]
+  credits       CreditEntry[]
+
+  @@unique([tenantId, email])
+  @@unique([tenantId, phone])
+  @@unique([tenantId, checkinCode])
+  @@index([tenantId, lastName])
+  @@map("members")
+}
+
+enum PlanType {
+  recurring
+  fixed_term
+  class_pack
+  drop_in
+  trial
+}
+
+enum BillingPeriod {
+  month
+  year
+}
+
+model MembershipPlan {
+  id                 String         @id @default(uuid(7)) @db.Uuid
+  tenantId           String         @map("tenant_id") @db.Uuid
+  name               String
+  description        String?
+  type               PlanType
+  priceMinor         BigInt         @map("price_minor")
+  currency           String         @db.Char(3)
+  /// recurring only.
+  billingPeriod      BillingPeriod? @map("billing_period")
+  /// Validity in days for fixed_term, trial, class_pack, drop_in. NULL for recurring (period decides).
+  durationDays       Int?           @map("duration_days")
+  /// class_pack / drop_in. NULL = unlimited classes.
+  credits            Int?
+  /// Empty = every location.
+  allowedLocationIds String[]       @map("allowed_location_ids") @db.Uuid
+  isPublic           Boolean        @default(true) @map("is_public")
+  isActive           Boolean        @default(true) @map("is_active")
+  sortOrder          Int            @default(0) @map("sort_order")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  subscriptions MemberSubscription[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("membership_plans")
+}
+
+enum MemberSubscriptionStatus {
+  /// Sold but not paid ("pay at the front desk").
+  pending
+  active
+  expired
+  cancelled
+}
+
+model MemberSubscription {
+  id              String                   @id @default(uuid(7)) @db.Uuid
+  tenantId        String                   @map("tenant_id") @db.Uuid
+  memberId        String                   @map("member_id") @db.Uuid
+  planId          String                   @map("plan_id") @db.Uuid
+  status          MemberSubscriptionStatus @default(pending)
+  startsOn        DateTime                 @map("starts_on") @db.Date
+  /// Inclusive. NULL = open-ended.
+  endsOn          DateTime?                @map("ends_on") @db.Date
+  autoRenew       Boolean                  @default(false) @map("auto_renew")
+  /// Price at the time of sale — later price changes never touch it.
+  priceMinor      BigInt                   @map("price_minor")
+  currency        String                   @db.Char(3)
+  /// Snapshot of the plan: true = no credits needed to book.
+  unlimited       Boolean
+  cancelledAt     DateTime?                @map("cancelled_at") @db.Timestamptz(3)
+  createdByUserId String?                  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  member   Member               @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  plan     MembershipPlan       @relation(fields: [planId], references: [id])
+  freezes  SubscriptionFreeze[]
+  payments Payment[]
+  credits  CreditEntry[]
+
+  @@index([tenantId, memberId])
+  @@index([tenantId, endsOn])
+  @@map("member_subscriptions")
+}
+
+model SubscriptionFreeze {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  subscriptionId String   @map("subscription_id") @db.Uuid
+  startsOn       DateTime @map("starts_on") @db.Date
+  /// Inclusive.
+  endsOn         DateTime @map("ends_on") @db.Date
+  reason         String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  subscription MemberSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("subscription_freezes")
+}
+
+enum CreditReason {
+  purchase
+  booking
+  booking_refund
+  adjustment
+}
+
+/// Append-only: +credits on purchase, −1 per booking, +1 when a booking is cancelled in time.
+model CreditEntry {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  tenantId       String       @map("tenant_id") @db.Uuid
+  memberId       String       @map("member_id") @db.Uuid
+  subscriptionId String       @map("subscription_id") @db.Uuid
+  bookingId      String?      @map("booking_id") @db.Uuid
+  delta          Int
+  reason         CreditReason
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  member       Member             @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  subscription MemberSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, subscriptionId])
+  @@map("credit_ledger")
+}
+
+// ───────────── Booking and check-in ─────────────
+
+enum BookingStatus {
+  booked
+  cancelled
+  late_cancel
+  no_show
+  attended
+}
+
+enum BookingSource {
+  staff
+  widget
+  portal
+  /// Promoted automatically from the waitlist.
+  waitlist
+}
+
+model Booking {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  tenantId        String        @map("tenant_id") @db.Uuid
+  sessionId       String        @map("session_id") @db.Uuid
+  memberId        String        @map("member_id") @db.Uuid
+  subscriptionId  String?       @map("subscription_id") @db.Uuid
+  status          BookingStatus @default(booked)
+  source          BookingSource
+  creditUsed      Boolean       @default(false) @map("credit_used")
+  cancelledAt     DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  reminderSentAt  DateTime?     @map("reminder_sent_at") @db.Timestamptz(3)
+  createdByUserId String?       @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, sessionId])
+  @@index([tenantId, memberId])
+  @@map("bookings")
+}
+
+enum WaitlistStatus {
+  waiting
+  promoted
+  removed
+}
+
+model WaitlistEntry {
+  id                String         @id @default(uuid(7)) @db.Uuid
+  tenantId          String         @map("tenant_id") @db.Uuid
+  sessionId         String         @map("session_id") @db.Uuid
+  memberId          String         @map("member_id") @db.Uuid
+  status            WaitlistStatus @default(waiting)
+  promotedBookingId String?        @map("promoted_booking_id") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, sessionId])
+  @@map("waitlist_entries")
+}
+
+enum CheckInMethod {
+  qr
+  search
+}
+
+model CheckIn {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  tenantId    String        @map("tenant_id") @db.Uuid
+  memberId    String        @map("member_id") @db.Uuid
+  locationId  String        @map("location_id") @db.Uuid
+  bookingId   String?       @map("booking_id") @db.Uuid
+  method      CheckInMethod
+  byUserId    String?       @map("by_user_id") @db.Uuid
+  checkedInAt DateTime      @default(now()) @map("checked_in_at") @db.Timestamptz(3)
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, checkedInAt])
+  @@index([tenantId, memberId])
+  @@map("check_ins")
+}
+
+// ───────────── Payments (manual, Phase 1) ─────────────
+
+enum PaymentMethod {
+  cash
+  card_terminal
+  bank_transfer
+}
+
+enum PaymentStatus {
+  succeeded
+  refunded
+}
+
+model Payment {
+  id               String        @id @default(uuid(7)) @db.Uuid
+  tenantId         String        @map("tenant_id") @db.Uuid
+  memberId         String        @map("member_id") @db.Uuid
+  subscriptionId   String?       @map("subscription_id") @db.Uuid
+  amountMinor      BigInt        @map("amount_minor")
+  currency         String        @db.Char(3)
+  method           PaymentMethod
+  status           PaymentStatus @default(succeeded)
+  /// Sequential per tenant (tenant_counters 'receipt').
+  receiptNumber    Int           @map("receipt_number")
+  note             String?
+  receivedByUserId String?       @map("received_by_user_id") @db.Uuid
+  paidAt           DateTime      @default(now()) @map("paid_at") @db.Timestamptz(3)
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  member       Member              @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  subscription MemberSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, receiptNumber])
+  @@index([tenantId, paidAt])
+  @@map("payments")
+}
+
+model TenantCounter {
+  tenantId String @map("tenant_id") @db.Uuid
+  key      String
+  value    Int    @default(0)
+
+  @@id([tenantId, key])
+  @@map("tenant_counters")
+}
+
+// ───────────── Leads (widget form) ─────────────
+
+enum LeadStage {
+  new
+  contacted
+  trial
+  member
+  lost
+}
+
+model Lead {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  firstName  String    @map("first_name")
+  lastName   String?   @map("last_name")
+  email      String?
+  phone      String?
+  message    String?
+  source     String    @default("widget")
+  stage      LeadStage @default(new)
+  locationId String?   @map("location_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([tenantId, createdAt])
+  @@map("leads")
+}
+
+// ───────────── Member email-code login (until Keycloak member login) ─────────────
+
+model MemberLoginCode {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  memberId   String    @map("member_id") @db.Uuid
+  codeHash   String    @map("code_hash")
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  attempts   Int       @default(0)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([tenantId, memberId])
+  @@map("member_login_codes")
+}
+
+// ───────────── Outbox (domain events → notifications, webhooks, analytics) ─────────────
+
+model OutboxEvent {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  type        String
+  payload     Json
+  /// Same key twice = one event (e.g. "reminder:<bookingId>").
+  dedupeKey   String?   @map("dedupe_key")
+  attempts    Int       @default(0)
+  lockedUntil DateTime? @map("locked_until") @db.Timestamptz(3)
+  lastError   String?   @map("last_error")
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([tenantId, dedupeKey])
+  @@index([processedAt, createdAt])
+  @@map("outbox_events")
+}
+
+// ═════════════════════════════ Phase 3 — Staff and finance ═════════════════════════════
+// Tenant-owned: RLS, FK to tenants and same-tenant FKs in the *_staff_finance_rls migration.
+
+enum PayType {
+  /// payRateMinor per month
+  salary
+  /// payRateMinor per hour clocked
+  hourly
+  /// payRateMinor per class taught
+  per_class
+}
+
+enum EmployeeStatus {
+  active
+  inactive
+}
+
+model Employee {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  tenantId       String         @map("tenant_id") @db.Uuid
+  /// Staff login (users table) — links classes taught and memberships sold to this person.
+  userId         String?        @map("user_id") @db.Uuid
+  firstName      String         @map("first_name")
+  lastName       String         @map("last_name")
+  email          String?
+  phone          String?
+  /// Job title shown in the app ("Head coach", "Front desk").
+  title          String
+  payType        PayType        @map("pay_type")
+  payRateMinor   BigInt         @map("pay_rate_minor")
+  currency       String         @db.Char(3)
+  /// Commission on memberships this person sells, in basis points (500 = 5%).
+  commissionBp   Int            @default(0) @map("commission_bp")
+  homeLocationId String?        @map("home_location_id") @db.Uuid
+  startedOn      DateTime       @map("started_on") @db.Date
+  status         EmployeeStatus @default(active)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  shifts      Shift[]
+  timeEntries TimeEntry[]
+
+  @@unique([tenantId, userId])
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("employees")
+}
+
+model Shift {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  locationId String   @map("location_id") @db.Uuid
+  startsAt   DateTime @map("starts_at") @db.Timestamptz(3)
+  endsAt     DateTime @map("ends_at") @db.Timestamptz(3)
+  note       String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, startsAt])
+  @@map("shifts")
+}
+
+/// Clock-in / clock-out. One open entry (clock_out IS NULL) per employee at a time.
+model TimeEntry {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  employeeId String    @map("employee_id") @db.Uuid
+  locationId String?   @map("location_id") @db.Uuid
+  clockIn    DateTime  @map("clock_in") @db.Timestamptz(3)
+  clockOut   DateTime? @map("clock_out") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId])
+  @@index([tenantId, clockIn])
+  @@map("time_entries")
+}
+
+model ExpenseCategory {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  /// Built-in categories have a key (rent, utilities, …) so code can refer to them.
+  key       String?
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  expenses Expense[]
+  budgets  Budget[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("expense_categories")
+}
+
+model Expense {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  categoryId        String    @map("category_id") @db.Uuid
+  locationId        String?   @map("location_id") @db.Uuid
+  amountMinor       BigInt    @map("amount_minor")
+  currency          String    @db.Char(3)
+  spentOn           DateTime  @map("spent_on") @db.Date
+  vendor            String?
+  note              String?
+  /// A template that repeats every month on the same day (the worker adds each month's copy).
+  recurringMonthly  Boolean   @default(false) @map("recurring_monthly")
+  /// Copies point at their template.
+  recurringParentId String?   @map("recurring_parent_id") @db.Uuid
+  createdByUserId   String?   @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  category ExpenseCategory @relation(fields: [categoryId], references: [id])
+
+  @@unique([tenantId, recurringParentId, spentOn])
+  @@index([tenantId, spentOn])
+  @@map("expenses")
+}
+
+model Budget {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  categoryId  String   @map("category_id") @db.Uuid
+  /// First day of the month.
+  month       DateTime @db.Date
+  amountMinor BigInt   @map("amount_minor")
+  currency    String   @db.Char(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  category ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, categoryId, month])
+  @@index([tenantId])
+  @@map("budgets")
+}

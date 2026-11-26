@@ -1,0 +1,149 @@
+{
+  "realm": "gym",
+  "enabled": true,
+  "displayName": "Gym Manager",
+  "organizationsEnabled": true,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "verifyEmail": false,
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "passwordPolicy": "length(10) and notUsername",
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 43200,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "ar"],
+  "defaultLocale": "en",
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@gym.local",
+    "fromDisplayName": "Gym Manager"
+  },
+  "clients": [
+    {
+      "clientId": "gym-admin",
+      "name": "Admin app",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": ["http://localhost:3000/auth/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience gym-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.custom.audience": "gym-api", "access.token.claim": "true", "id.token.claim": "false" }
+        },
+        {
+          "name": "organization",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-organization-membership-mapper",
+          "config": {
+            "claim.name": "organization",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "multivalued": "true",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "gym-portal",
+      "name": "Member portal",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:3001/*"],
+      "webOrigins": ["http://localhost:3001"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "protocolMappers": [
+        {
+          "name": "audience gym-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.custom.audience": "gym-api", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      ]
+    },
+    {
+      "clientId": "gym-api-admin",
+      "name": "API — user provisioning (service account)",
+      "description": "Used by the worker to create staff accounts and send set-password invitations.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "dev-keycloak-admin-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-gym-api-admin",
+      "enabled": true,
+      "serviceAccountClientId": "gym-api-admin",
+      "clientRoles": { "realm-management": ["manage-users", "view-users", "query-users"] }
+    },
+    {
+      "username": "owner@ironfit.test",
+      "email": "owner@ironfit.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Rami",
+      "lastName": "Haddad",
+      "credentials": [{ "type": "password", "value": "dev-password", "temporary": false }]
+    },
+    {
+      "username": "frontdesk@ironfit.test",
+      "email": "frontdesk@ironfit.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Lea",
+      "lastName": "Khoury",
+      "credentials": [{ "type": "password", "value": "dev-password", "temporary": false }]
+    },
+    {
+      "username": "coach@ironfit.test",
+      "email": "coach@ironfit.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Nadim",
+      "lastName": "Aoun",
+      "credentials": [{ "type": "password", "value": "dev-password", "temporary": false }]
+    },
+    {
+      "username": "owner@pulse.test",
+      "email": "owner@pulse.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Maya",
+      "lastName": "Nasser",
+      "credentials": [{ "type": "password", "value": "dev-password", "temporary": false }]
+    },
+    {
+      "username": "platform@gym.local",
+      "email": "platform@gym.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "dev-password", "temporary": false }]
+    }
+  ]
+}

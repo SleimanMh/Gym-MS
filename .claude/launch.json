@@ -1,0 +1,45 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps/api/dist/main.js"
+      ],
+      "port": 4000
+    },
+    {
+      "name": "worker",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps/api/dist/worker.js"
+      ],
+      "port": 8025,
+      "url": "http://localhost:8025"
+    },
+    {
+      "name": "admin",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps/admin/node_modules/next/dist/bin/next",
+        "dev",
+        "apps/admin",
+        "--port",
+        "3000"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "widget",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps/widget/node_modules/vite/bin/vite.js",
+        "apps/widget",
+        "--port",
+        "5173"
+      ],
+      "port": 5173
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+/* Scan src/ for classes regardless of the directory Next is started from. */
+@import "tailwindcss" source("../");
+
+/*
+ * Studio look: a soft grey canvas, borderless white cards with generous radius, pill-shaped
+ * controls, a dark icon rail, and ONE accent — the gym's brand colour (violet by default),
+ * injected per tenant as --accent. Green/amber/red only for status.
+ */
+@theme {
+  --font-sans: "Plus Jakarta Sans", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, sans-serif;
+  --radius-DEFAULT: 8px;
+  --radius-card: 22px;
+
+  --color-bg: #f1f1f5;
+  --color-surface: #ffffff;
+  --color-sunken: #f6f6f9;
+  --color-border: #e8e8ee;
+  --color-border-strong: #d4d4de;
+  --color-muted: #5f6170;
+  --color-faint: #8d8f9c;
+  --color-fg: #15151c;
+  /* The dark rail and dark feature cards. */
+  --color-ink: #121218;
+  --color-ink-soft: #24242e;
+
+  --color-success: #127a3e;
+  --color-success-soft: #e7f6ee;
+  --color-warning: #a8550b;
+  --color-warning-soft: #fdf2e4;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+}
+
+/* `inline` so utilities read --accent where they are used: the shell sets it per tenant. */
+@theme inline {
+  --color-accent: var(--accent, #6d5df6);
+  --color-accent-fg: #ffffff;
+  --color-accent-soft: color-mix(in srgb, var(--accent, #6d5df6) 10%, white);
+  --color-accent-line: color-mix(in srgb, var(--accent, #6d5df6) 30%, white);
+  --color-accent-deep: color-mix(in srgb, var(--accent, #6d5df6) 78%, black);
+}
+
+@layer base {
+  html {
+    font-size: 16px;
+  }
+  body {
+    @apply bg-bg text-fg antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .transition-subtle {
+    transition:
+      background-color 140ms ease,
+      border-color 140ms ease,
+      color 140ms ease,
+      box-shadow 140ms ease;
+  }
+}
+
+@media print {
+  aside,
+  header,
+  nav[aria-label="Sections"],
+  nav[aria-label="Main"] {
+    display: none !important;
+  }
+  body {
+    background: white;
+  }
+}
