@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { permissionsForRoles, type PlatformRole } from "@gym/shared";
+import { effectivePermissions, type PermissionOverride, type PlatformRole } from "@gym/shared";
 import type { Principal } from "../../common/request-context";
 import { PrismaService } from "../../infra/prisma.service";
 import { TenantDb } from "../../infra/tenant-db.service";
@@ -38,6 +38,7 @@ export class IdentityService {
     if (!user) return null;
 
     let roles: string[] = [];
+    let overrides: PermissionOverride[] = [];
     let isTenantMember = false;
     if (tenantId) {
       const found = await this.tenantDb.runFor(tenantId, async (tx) => {
@@ -45,12 +46,16 @@ export class IdentityService {
           where: { tenantId_userId: { tenantId, userId: user.id } },
         });
         if (membership?.status !== "active") return null;
-        const userRoles = await tx.userRole.findMany({ where: { userId: user.id }, select: { roleKey: true } });
-        return userRoles.map((r) => r.roleKey);
+        const [userRoles, tweaks] = await Promise.all([
+          tx.userRole.findMany({ where: { userId: user.id }, select: { roleKey: true } }),
+          tx.userPermissionOverride.findMany({ where: { userId: user.id }, select: { permission: true, granted: true } }),
+        ]);
+        return { roles: userRoles.map((r) => r.roleKey), tweaks };
       });
       if (found) {
         isTenantMember = true;
-        roles = [...new Set(found)].sort();
+        roles = [...new Set(found.roles)].sort();
+        overrides = found.tweaks;
       }
     }
 
@@ -61,7 +66,8 @@ export class IdentityService {
       lastName: user.lastName,
       isTenantMember,
       roles,
-      permissions: isTenantMember ? permissionsForRoles(roles) : [],
+      // Roles plus the owner's per-person tweaks (Staff page → Access).
+      permissions: isTenantMember ? effectivePermissions(roles, overrides) : [],
       platformRole: (user.platformUser?.role as PlatformRole | undefined) ?? null,
     };
   }

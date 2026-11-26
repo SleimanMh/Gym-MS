@@ -807,8 +807,10 @@ Phase 1 gate check, 2026-11-24: 65/65 automated tests pass, lint and typecheck c
 - [x] Staff and Finance screens in the admin app (EN/AR), demo data, integration tests (roles, plan gating, time clock rules, expenses, budgets, cross-tenant RLS)
 - [x] P&L per location: revenue by member home location, expenses by location, staff pay by where hours and classes happened (ADR 0005); gym-wide costs spread by revenue share; adds up to the overview and payroll
 - [x] Staff performance rankings (classes, class fill, check-ins, no-shows, memberships sold, sales; pay per check-in for finance roles)
+- [x] Per-person access: the owner sets each staff member's role and, per area, Hidden / View / Manage (ADR 0006); audited; Pro for per-area tweaks
+- [x] Team calendar (week grid): everyone's shifts, activities and classes; overlapping slots side by side; click an empty spot to add; one person can't double-book; "My schedule" for every staff member
 - [ ] Cash-flow view; classes/utilisation dashboard; analytics rollup jobs (figures are computed live today)
 - [ ] Payroll is not a payroll engine (no tax, deductions or payslips) — export only, by design
 - [ ] Exit gate: an owner sees monthly profit per location and staff rankings that match their own records
 
-Phase 3 progress check, 2026-11-26: 96 automated tests pass (26 API unit, 52 integration, 18 shared), lint and typecheck clean. Profit per location and staff rankings are built and reconcile with the overview and payroll in tests; the exit gate still needs a real owner to compare them with their own records.
+Phase 3 progress check, 2026-11-27: 104 automated tests pass (26 API unit, 58 integration, 20 shared), lint and typecheck clean. Profit per location and staff rankings are built and reconcile with the overview and payroll in tests; the exit gate still needs a real owner to compare them with their own records.

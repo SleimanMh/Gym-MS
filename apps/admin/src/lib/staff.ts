@@ -45,10 +45,10 @@ export function rateText(e: { payType: PayType; payRateMinor: string | null; cur
 }
 
 /** Tabs shown on every Staff screen; payroll only for people who see pay. */
-export function staffTabs(t: T, me: MeResponse, active: "team" | "rota" | "payroll" | "performance") {
+export function staffTabs(t: T, me: MeResponse, active: "team" | "schedule" | "payroll" | "performance") {
   const tabs = [
     { href: "/staff", label: t("st.tab.team"), active: active === "team" },
-    { href: "/staff/rota", label: t("st.tab.rota"), active: active === "rota" },
+    { href: "/staff/schedule", label: t("st.tab.schedule"), active: active === "schedule" },
   ];
   if (me.permissions.includes("report.view")) tabs.push({ href: "/staff/performance", label: t("st.tab.performance"), active: active === "performance" });
   if (me.permissions.includes("finance.view")) tabs.push({ href: "/staff/payroll", label: t("st.tab.payroll"), active: active === "payroll" });

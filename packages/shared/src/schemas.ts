@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PLAN_CODES } from "./entitlements";
+import { ACCESS_AREAS, STAFF_ROLE_KEYS } from "./permissions";
 
 export const languageSchema = z.enum(["en", "ar"]);
 export type Language = z.infer<typeof languageSchema>;
@@ -71,3 +72,12 @@ export interface MeResponse {
   platformRole: string | null;
   entitlements: { planCode: string | null; features: string[]; limits: Record<string, number | null> } | null;
 }
+
+/** PUT /v1/staff/:id/access — one role, plus optional per-area levels (Pro: identity.custom_roles). */
+export const staffAccessSchema = z.object({
+  role: z.enum(STAFF_ROLE_KEYS),
+  areas: z
+    .record(z.enum(ACCESS_AREAS.map((a) => a.key) as [string, ...string[]]), z.enum(["none", "view", "manage"]))
+    .optional(),
+});
+export type StaffAccessInput = z.infer<typeof staffAccessSchema>;

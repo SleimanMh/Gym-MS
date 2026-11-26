@@ -885,6 +885,8 @@ model Shift {
   locationId String   @map("location_id") @db.Uuid
   startsAt   DateTime @map("starts_at") @db.Timestamptz(3)
   endsAt     DateTime @map("ends_at") @db.Timestamptz(3)
+  /// What the slot is for ("Front desk", "Personal training", "Cleaning"…). Null = general shift.
+  activity   String?
   note       String?
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -892,7 +894,24 @@ model Shift {
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, startsAt])
+  @@index([tenantId, employeeId, startsAt])
   @@map("shifts")
+}
+
+/// Per-person access tweaks on top of their roles (set by the owner on the Staff page):
+/// granted = true adds a permission, false removes one the roles give. Owners are never reduced.
+model UserPermissionOverride {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  permission String
+  granted    Boolean
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([tenantId, userId, permission])
+  @@index([tenantId])
+  @@map("user_permission_overrides")
 }
 
 /// Clock-in / clock-out. One open entry (clock_out IS NULL) per employee at a time.

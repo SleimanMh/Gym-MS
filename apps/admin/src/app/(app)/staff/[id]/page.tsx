@@ -1,12 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ACCESS_AREAS, addDays, STAFF_ROLE_KEYS, lowestPlanWith, type AccessLevel } from "@gym/shared";
+import { AccessEditor } from "@/components/access-editor";
+import { TeamCalendar } from "@/components/team-calendar";
 import { Button, Card, Input, Label, Notice, PageHeader, SectionTitle, Select } from "@/components/ui";
 import { ApiError, api, getMe } from "@/lib/api";
 import { fmtDateOnly, fmtDay, fmtTime, fmtTimeRange, money } from "@/lib/format";
+import { activityOptions, calLabels, loadWeek } from "@/lib/calendar";
+import type { MessageKey } from "@/lib/i18n";
 import { getT } from "@/lib/i18n";
 import { rateText, type Employee } from "@/lib/staff";
-import { clockIn, clockOut, updateEmployee } from "../actions";
+import { clockIn, clockOut, deleteSlot, saveAccess, saveSlot, updateEmployee } from "../actions";
 import { PayFields } from "../pay-fields";
 
 interface Detail extends Employee {
@@ -17,7 +22,7 @@ interface Detail extends Employee {
 }
 
 /** One team member: this month at a glance, their rota, clock-ins, classes and pay settings. */
-export default async function EmployeePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> }) {
+export default async function EmployeePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; week?: string; saved?: string }> }) {
   const [{ id }, sp, { t, lang, err }, me] = await Promise.all([params, searchParams, getT(), getMe()]);
   if (!me?.permissions.includes("staff.view") || !me.tenant) notFound();
   let e: Detail;
@@ -28,11 +33,26 @@ export default async function EmployeePage({ params, searchParams }: { params: P
     throw x;
   }
   const canManage = me.permissions.includes("staff.manage");
-  const locations = canManage ? await api<{ id: string; name: string }[]>("/v1/locations") : [];
+  const canAccess = me.permissions.includes("tenant.security.manage");
+  const [locations, week, access] = await Promise.all([
+    api<{ id: string; name: string }[]>("/v1/locations"),
+    loadWeek("/v1/team-calendar", { week: sp.week, employeeId: e.id, tz: e.timezone, lang, t }),
+    canAccess
+      ? api<{
+          userId: string | null;
+          role: string | null;
+          areas: Record<string, AccessLevel> | null;
+          isSelf: boolean;
+          roleDefaults: Record<string, Record<string, AccessLevel>>;
+          customAllowed: boolean;
+        }>(`/v1/staff/${e.id}/access`)
+      : null,
+  ]);
   const tz = e.timezone;
   const nf = new Intl.NumberFormat(lang === "ar" ? "ar-LB" : "en-GB", { maximumFractionDigits: 1 });
   const hoursOf = (a: string, b: string | null) => (b ? (new Date(b).getTime() - new Date(a).getTime()) / 3_600_000 : null);
   const back = `/staff/${e.id}`;
+  const weekBack = `/staff/${e.id}?week=${week.week}`;
   const onShiftSince = e.timeEntries.find((x) => !x.clockOut)?.clockIn ?? null;
 
   const stats = [
@@ -93,103 +113,139 @@ export default async function EmployeePage({ params, searchParams }: { params: P
         )}
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-3">
-        <Card>
-          <SectionTitle>{t("st.detail.classes")}</SectionTitle>
-          {e.upcomingClasses.length ? (
-            <ul className="flex flex-col gap-2">
-              {e.upcomingClasses.map((c) => (
-                <li key={c.id}>
-                  <Link href={`/schedule/${c.id}`} className="transition-subtle flex items-center gap-3 rounded-2xl bg-sunken px-3 py-2.5 hover:bg-accent-soft">
-                    <span className="h-8 w-[3px] shrink-0 rounded-full" style={{ background: c.color }} aria-hidden />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold">{c.className}</span>
-                      <span className="block truncate text-xs text-faint">
-                        {fmtDay(c.startsAt, tz, lang)} · {fmtTime(c.startsAt, tz, lang)} · {c.location}
-                      </span>
-                    </span>
-                    <span className="text-xs tabular-nums text-muted">
-                      {c.booked}/{c.capacity}
-                    </span>
-                    <ChevronRight size={16} aria-hidden className="text-faint rtl:-scale-x-100" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-muted">{t("st.detail.noClasses")}</p>
-          )}
-        </Card>
+      {/* This person's week: shifts, activities and classes — click to add a slot for them */}
+      <section className="mb-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">
+            {t("st.tab.schedule")} · <span className="text-muted">{t("cal.hours", { n: nf.format(Math.round(week.hoursFor(e.id) * 10) / 10) })}</span>
+          </h2>
+          <div className="flex items-center gap-1 rounded-full bg-surface p-1">
+            <Link href={`/staff/${e.id}?week=${addDays(week.week, -7)}`} aria-label={t("cal.prev")} className="transition-subtle flex size-8 items-center justify-center rounded-full hover:bg-sunken">
+              <ChevronLeft size={16} aria-hidden className="rtl:-scale-x-100" />
+            </Link>
+            <span className="px-2 text-sm font-medium">
+              {week.dayLabels[0]!.dm} – {week.dayLabels[6]!.dm}
+            </span>
+            <Link href={`/staff/${e.id}?week=${addDays(week.week, 7)}`} aria-label={t("cal.next")} className="transition-subtle flex size-8 items-center justify-center rounded-full hover:bg-sunken">
+              <ChevronRight size={16} aria-hidden className="rtl:-scale-x-100" />
+            </Link>
+          </div>
+        </div>
+        <TeamCalendar
+          days={week.days}
+          dayLabels={week.dayLabels}
+          today={week.today}
+          nowMin={week.nowMin}
+          employees={week.employees}
+          events={week.events}
+          locations={locations}
+          activities={activityOptions(t)}
+          canEdit={canManage && e.status === "active"}
+          showFilter={false}
+          labels={calLabels(t)}
+          saveAction={saveSlot}
+          deleteAction={deleteSlot}
+          back={weekBack}
+        />
+      </section>
 
-        <Card>
-          <SectionTitle>{t("st.detail.upcomingShifts")}</SectionTitle>
-          {e.shifts.length ? (
-            <ul className="flex flex-col gap-1.5">
-              {e.shifts.map((s) => (
-                <li key={s.id} className="flex items-center justify-between gap-3 rounded-xl bg-sunken px-3 py-2 text-sm">
-                  <span className="font-medium">{fmtDay(s.startsAt, tz, lang)}</span>
-                  <span className="tabular-nums text-muted">{fmtTimeRange(s.startsAt, s.endsAt, tz, lang)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-muted">{t("st.detail.noShifts")}</p>
-          )}
-        </Card>
+      <div className="grid gap-5 xl:grid-cols-2">
+        {canAccess && access && (
+          <Card id="access" className="p-6">
+            <SectionTitle>{t("acc.title")}</SectionTitle>
+            <p className="-mt-1 mb-4 text-sm text-muted">{t("acc.subtitle", { name: e.firstName })}</p>
+            {sp.saved === "access" && <Notice tone="success">{t("acc.saved")}</Notice>}
+            {!access.userId ? (
+              <p className="rounded-2xl bg-sunken px-4 py-3 text-sm text-muted">{t("acc.noLogin")}</p>
+            ) : access.isSelf ? (
+              <p className="rounded-2xl bg-sunken px-4 py-3 text-sm text-muted">{t("acc.self")}</p>
+            ) : (
+              <AccessEditor
+                employeeId={e.id}
+                roles={STAFF_ROLE_KEYS.map((r) => ({ key: r, label: t(`acc.role.${r}` as MessageKey), help: t(`acc.roleHelp.${r}` as MessageKey) }))}
+                areas={ACCESS_AREAS.map((a) => ({
+                  key: a.key,
+                  label: t(`acc.area.${a.key}` as MessageKey),
+                  levels: a.manage.length ? ["none", "view", "manage"] : ["none", "view"],
+                }))}
+                roleDefaults={access.roleDefaults}
+                initialRole={access.role ?? "front_desk"}
+                initialAreas={access.areas ?? access.roleDefaults[access.role ?? "front_desk"] ?? {}}
+                customAllowed={access.customAllowed}
+                labels={{
+                  role: t("acc.role"),
+                  areas: t("acc.areas"),
+                  none: t("acc.level.none"),
+                  view: t("acc.level.view"),
+                  manage: t("acc.level.manage"),
+                  on: t("acc.level.on"),
+                  save: t("acc.save"),
+                  reset: t("acc.reset"),
+                  custom: t("acc.custom"),
+                  ownerAll: t("acc.ownerAll"),
+                  locked: t("acc.locked", { plan: (lowestPlanWith("identity.custom_roles") ?? "pro").replace(/^./, (c) => c.toUpperCase()) }),
+                }}
+                action={saveAccess}
+              />
+            )}
+          </Card>
+        )}
 
-        <Card>
-          <SectionTitle>{t("st.detail.timesheet")}</SectionTitle>
-          {e.timeEntries.length ? (
-            <ul className="flex flex-col gap-1.5">
-              {e.timeEntries.slice(0, 10).map((te) => {
-                const h = hoursOf(te.clockIn, te.clockOut);
-                return (
-                  <li key={te.id} className="flex items-center justify-between gap-3 rounded-xl px-1 py-1 text-sm">
-                    <span className="font-medium">{fmtDay(te.clockIn, tz, lang)}</span>
-                    <span className="tabular-nums text-muted">{fmtTimeRange(te.clockIn, te.clockOut, tz, lang)}</span>
-                    <span className="w-14 text-end font-semibold tabular-nums">{h === null ? "" : t("pay.workHours", { n: nf.format(Math.round(h * 10) / 10) })}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="text-sm text-muted">{t("st.detail.noTime")}</p>
-          )}
-        </Card>
+        <div className="flex flex-col gap-5">
+          <Card className="p-6">
+            <SectionTitle>{t("st.detail.pay")}</SectionTitle>
+            {e.stats.pay && (
+              <p className="-mt-1 mb-4 text-sm text-muted">
+                {t("st.detail.breakdown", { base: money(e.stats.pay.baseMinor, e.currency, lang), comm: money(e.stats.pay.commissionMinor, e.currency, lang) })}
+              </p>
+            )}
+            {canManage ? (
+              <form action={updateEmployee} className="flex flex-col gap-4">
+                <input type="hidden" name="id" value={e.id} />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="title">{t("st.f.title")}</Label>
+                    <Input id="title" name="title" defaultValue={e.title} required minLength={2} />
+                  </div>
+                  <div>
+                    <Label htmlFor="status">{t("st.f.status")}</Label>
+                    <Select id="status" name="status" defaultValue={e.status}>
+                      <option value="active">{t("st.active")}</option>
+                      <option value="inactive">{t("st.inactive")}</option>
+                    </Select>
+                  </div>
+                </div>
+                <PayFields t={t} currency={e.currency} locations={locations} value={e} />
+                <div className="flex justify-end">
+                  <Button type="submit">{t("st.save")}</Button>
+                </div>
+              </form>
+            ) : (
+              !e.stats.pay && <p className="text-sm text-muted">{t("st.detail.payHidden")}</p>
+            )}
+          </Card>
+
+          <Card>
+            <SectionTitle>{t("st.detail.timesheet")}</SectionTitle>
+            {e.timeEntries.length ? (
+              <ul className="flex flex-col gap-1.5">
+                {e.timeEntries.slice(0, 8).map((te) => {
+                  const h = hoursOf(te.clockIn, te.clockOut);
+                  return (
+                    <li key={te.id} className="flex items-center justify-between gap-3 rounded-xl px-1 py-1 text-sm">
+                      <span className="font-medium">{fmtDay(te.clockIn, tz, lang)}</span>
+                      <span className="tabular-nums text-muted">{fmtTimeRange(te.clockIn, te.clockOut, tz, lang)}</span>
+                      <span className="w-14 text-end font-semibold tabular-nums">{h === null ? "" : t("pay.workHours", { n: nf.format(Math.round(h * 10) / 10) })}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted">{t("st.detail.noTime")}</p>
+            )}
+          </Card>
+        </div>
       </div>
-
-      <Card className="mt-5 max-w-2xl p-6">
-        <SectionTitle>{t("st.detail.pay")}</SectionTitle>
-        {e.stats.pay && (
-          <p className="-mt-1 mb-4 text-sm text-muted">
-            {t("st.detail.breakdown", { base: money(e.stats.pay.baseMinor, e.currency, lang), comm: money(e.stats.pay.commissionMinor, e.currency, lang) })}
-          </p>
-        )}
-        {canManage ? (
-          <form action={updateEmployee} className="flex flex-col gap-4">
-            <input type="hidden" name="id" value={e.id} />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="title">{t("st.f.title")}</Label>
-                <Input id="title" name="title" defaultValue={e.title} required minLength={2} />
-              </div>
-              <div>
-                <Label htmlFor="status">{t("st.f.status")}</Label>
-                <Select id="status" name="status" defaultValue={e.status}>
-                  <option value="active">{t("st.active")}</option>
-                  <option value="inactive">{t("st.inactive")}</option>
-                </Select>
-              </div>
-            </div>
-            <PayFields t={t} currency={e.currency} locations={locations} value={e} />
-            <div className="flex justify-end">
-              <Button type="submit">{t("st.save")}</Button>
-            </div>
-          </form>
-        ) : (
-          !e.stats.pay && <p className="text-sm text-muted">{t("st.detail.payHidden")}</p>
-        )}
-      </Card>
     </>
   );
 }

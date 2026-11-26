@@ -8,16 +8,26 @@ import {
   NotFoundException,
   Param,
   ParseUUIDPipe,
+  ForbiddenException,
   Patch,
   Post,
+  Put,
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
 import { Prisma, type TenantTx } from "@gym/db";
 import {
+  accessLevels,
   addDays,
   addMonths,
+  calendarQuery,
   clockSchema,
+  effectivePermissions,
+  overridesFor,
+  permissionsForRoles,
+  staffAccessSchema,
+  STAFF_ROLE_KEYS,
+  type StaffAccessInput,
   employeeSchema,
   localDate,
   minorDigits,
@@ -35,6 +45,7 @@ import { requirePrincipal, requireTenant } from "../../common/request-context";
 import { ZodPipe } from "../../common/zod.pipe";
 import { TenantDb } from "../../infra/tenant-db.service";
 import { AuditService } from "../audit/audit.service";
+import { EntitlementsService } from "../entitlements/entitlements.service";
 import { staffStats, type EmployeeMonthStats } from "./staff-stats";
 
 const monthQuery = z.object({ month: monthStr.optional() });
@@ -53,6 +64,7 @@ export class StaffController {
   constructor(
     private readonly db: TenantDb,
     private readonly audit: AuditService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   /** [from, to) of a month in the gym's time zone; defaults to the current month. */
@@ -254,24 +266,16 @@ export class StaffController {
   @Post("shifts")
   @RequiresPermission("staff.manage")
   addShift(@Body(new ZodPipe(shiftSchema)) body: ShiftInput) {
-    const t = requireTenant();
+    return this.db.run((tx) => this.saveShift(tx, body));
+  }
+
+  /** Move or edit a slot (calendar edit dialog). */
+  @Put("shifts/:id")
+  @RequiresPermission("staff.manage")
+  updateShift(@Param("id", ParseUUIDPipe) id: string, @Body(new ZodPipe(shiftSchema)) body: ShiftInput) {
     return this.db.run(async (tx) => {
-      const [emp, loc] = await Promise.all([
-        tx.employee.findFirst({ where: { id: body.employeeId } }),
-        tx.location.findFirst({ where: { id: body.locationId, deletedAt: null } }),
-      ]);
-      if (!emp || !loc) throw new NotFoundException();
-      const tz = loc.timezone ?? t.timezone;
-      return tx.shift.create({
-        data: {
-          tenantId: t.id,
-          employeeId: emp.id,
-          locationId: loc.id,
-          startsAt: zonedToUtc(body.date, parseHhMm(body.start), tz),
-          endsAt: zonedToUtc(body.date, parseHhMm(body.end), tz),
-          note: body.note ?? null,
-        },
-      });
+      if (!(await tx.shift.findFirst({ where: { id } }))) throw new NotFoundException();
+      return this.saveShift(tx, body, id);
     });
   }
 
@@ -281,6 +285,190 @@ export class StaffController {
     const res = await this.db.run((tx) => tx.shift.deleteMany({ where: { id } }));
     if (!res.count) throw new NotFoundException();
     return { ok: true };
+  }
+
+  /**
+   * One person can't be in two slots at once (SHIFT_OVERLAP); different people may share a time
+   * slot for different activities.
+   */
+  private async saveShift(tx: TenantTx, body: ShiftInput, id?: string) {
+    const t = requireTenant();
+    const [emp, loc] = await Promise.all([
+      tx.employee.findFirst({ where: { id: body.employeeId } }),
+      tx.location.findFirst({ where: { id: body.locationId, deletedAt: null } }),
+    ]);
+    if (!emp || !loc) throw new NotFoundException();
+    const tz = loc.timezone ?? t.timezone;
+    const startsAt = zonedToUtc(body.date, parseHhMm(body.start), tz);
+    const endsAt = zonedToUtc(body.date, parseHhMm(body.end), tz);
+    const clash = await tx.shift.findFirst({
+      where: { employeeId: emp.id, startsAt: { lt: endsAt }, endsAt: { gt: startsAt }, ...(id ? { id: { not: id } } : {}) },
+      select: { id: true },
+    });
+    if (clash) throw new ConflictException({ code: "SHIFT_OVERLAP" });
+    const data = { tenantId: t.id, employeeId: emp.id, locationId: loc.id, startsAt, endsAt, activity: body.activity ?? null, note: body.note ?? null };
+    return id ? tx.shift.update({ where: { id }, data }) : tx.shift.create({ data });
+  }
+
+  // ── Calendars ──
+
+  /** Everyone's week (or one person's): shifts and the classes they teach, for the team calendar. */
+  @Get("team-calendar")
+  @RequiresPermission("staff.view")
+  calendar(@Query(new ZodPipe(calendarQuery)) q: z.infer<typeof calendarQuery>) {
+    const t = requireTenant();
+    return this.db.run(async (tx) => {
+      const employees = await tx.employee.findMany({
+        where: { status: "active", ...(q.employeeId ? { id: q.employeeId } : {}) },
+        orderBy: { firstName: "asc" },
+        select: { id: true, firstName: true, lastName: true, title: true, userId: true },
+      });
+      return {
+        timezone: t.timezone,
+        employees: employees.map((e) => ({ id: e.id, firstName: e.firstName, lastName: e.lastName, title: e.title })),
+        events: await this.events(tx, employees, q.from, q.to),
+      };
+    });
+  }
+
+  /** The signed-in person's own schedule (every staff member, whatever their role). */
+  @Get("my-schedule")
+  @RequiresPermission("location.view")
+  mySchedule(@Query(new ZodPipe(calendarQuery.omit({ employeeId: true }))) q: { from: string; to: string }) {
+    const t = requireTenant();
+    const userId = requirePrincipal().userId;
+    return this.db.run(async (tx) => {
+      const me = await tx.employee.findFirst({
+        where: { userId, status: "active" },
+        select: { id: true, firstName: true, lastName: true, title: true, userId: true },
+      });
+      if (!me) throw new NotFoundException({ code: "NO_EMPLOYEE_RECORD" });
+      return {
+        timezone: t.timezone,
+        employees: [{ id: me.id, firstName: me.firstName, lastName: me.lastName, title: me.title }],
+        events: await this.events(tx, [me], q.from, q.to),
+      };
+    });
+  }
+
+  private async events(tx: TenantTx, employees: { id: string; userId: string | null }[], from: string, to: string) {
+    const tz = requireTenant().timezone;
+    const range = { gte: zonedToUtc(from, 0, tz), lt: zonedToUtc(addDays(to, 1), 0, tz) };
+    const byUser = new Map(employees.filter((e) => e.userId).map((e) => [e.userId!, e.id]));
+    const [shifts, sessions] = await Promise.all([
+      tx.shift.findMany({
+        where: { employeeId: { in: employees.map((e) => e.id) }, startsAt: range },
+        orderBy: { startsAt: "asc" },
+      }),
+      byUser.size
+        ? tx.session.findMany({
+            where: { trainerUserId: { in: [...byUser.keys()] }, status: "scheduled", startsAt: range },
+            include: { classType: { select: { name: true, color: true } }, location: { select: { name: true } } },
+            orderBy: { startsAt: "asc" },
+          })
+        : [],
+    ]);
+    const locations = new Map((await tx.location.findMany({ select: { id: true, name: true } })).map((l) => [l.id, l.name]));
+    return [
+      ...shifts.map((s) => ({
+        id: s.id,
+        kind: "shift" as const,
+        employeeId: s.employeeId,
+        startsAt: s.startsAt,
+        endsAt: s.endsAt,
+        title: s.activity,
+        note: s.note,
+        color: null as string | null,
+        booked: null as number | null,
+        capacity: null as number | null,
+        locationId: s.locationId,
+        location: locations.get(s.locationId) ?? "",
+      })),
+      ...sessions.map((c) => ({
+        id: c.id,
+        kind: "class" as const,
+        employeeId: byUser.get(c.trainerUserId!)!,
+        startsAt: c.startsAt,
+        endsAt: c.endsAt,
+        title: c.classType.name as string | null,
+        note: null as string | null,
+        color: c.classType.color as string | null,
+        booked: c.bookedCount as number | null,
+        capacity: c.capacity as number | null,
+        locationId: c.locationId,
+        location: c.location.name,
+      })),
+    ].sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  }
+
+  // ── Access (what each person can see and do) ──
+
+  /** Role and per-area access of a team member's sign-in. */
+  @Get("staff/:id/access")
+  @RequiresPermission("tenant.security.manage")
+  async access(@Param("id", ParseUUIDPipe) id: string) {
+    const t = requireTenant();
+    const customAllowed = await this.entitlements.has(t.id, "identity.custom_roles");
+    return this.db.run(async (tx) => {
+      const e = await tx.employee.findFirst({ where: { id }, select: { userId: true } });
+      if (!e) throw new NotFoundException();
+      const roleDefaults = Object.fromEntries(STAFF_ROLE_KEYS.map((r) => [r, accessLevels(permissionsForRoles([r]))]));
+      if (!e.userId) return { userId: null, role: null, areas: null, customised: false, isSelf: false, roleDefaults, customAllowed };
+      const [roles, tweaks] = await Promise.all([
+        tx.userRole.findMany({ where: { userId: e.userId }, select: { roleKey: true } }),
+        tx.userPermissionOverride.findMany({ where: { userId: e.userId }, select: { permission: true, granted: true } }),
+      ]);
+      const keys = roles.map((r) => r.roleKey);
+      const role = STAFF_ROLE_KEYS.find((r) => keys.includes(r)) ?? null;
+      return {
+        userId: e.userId,
+        role,
+        areas: accessLevels(effectivePermissions(keys, tweaks)),
+        customised: tweaks.length > 0,
+        isSelf: e.userId === requirePrincipal().userId,
+        roleDefaults,
+        customAllowed,
+      };
+    });
+  }
+
+  /**
+   * Set someone's role and (Pro) fine-tune each area. Only owners can (tenant.security.manage);
+   * you can't change your own access, and the gym always keeps at least one owner. Audited.
+   */
+  @Put("staff/:id/access")
+  @RequiresPermission("tenant.security.manage")
+  async setAccess(@Param("id", ParseUUIDPipe) id: string, @Body(new ZodPipe(staffAccessSchema)) body: StaffAccessInput) {
+    const t = requireTenant();
+    const tweaks = body.role === "owner" ? [] : overridesFor(body.role, (body.areas ?? {}) as Parameters<typeof overridesFor>[1]);
+    if (tweaks.length && !(await this.entitlements.has(t.id, "identity.custom_roles"))) {
+      throw EntitlementsService.featureDenied("identity.custom_roles");
+    }
+    return this.db.run(async (tx) => {
+      const e = await tx.employee.findFirst({ where: { id }, select: { userId: true } });
+      if (!e) throw new NotFoundException();
+      const userId = e.userId;
+      if (!userId) throw new ConflictException({ code: "NO_LINKED_SIGNIN" });
+      if (userId === requirePrincipal().userId) throw new ForbiddenException({ code: "CANNOT_CHANGE_OWN_ACCESS" });
+      const before = await tx.userRole.findMany({ where: { userId }, select: { roleKey: true } });
+      if (before.some((r) => r.roleKey === "owner") && body.role !== "owner") {
+        const owners = await tx.userRole.count({ where: { roleKey: "owner" } });
+        if (owners <= 1) throw new ConflictException({ code: "LAST_OWNER" });
+      }
+      // Staff roles are replaced; a "member" role (they also train here) is kept.
+      await tx.userRole.deleteMany({ where: { userId, roleKey: { in: [...STAFF_ROLE_KEYS] } } });
+      await tx.userRole.create({ data: { tenantId: t.id, userId, roleKey: body.role } });
+      await tx.userPermissionOverride.deleteMany({ where: { userId } });
+      if (tweaks.length) await tx.userPermissionOverride.createMany({ data: tweaks.map((o) => ({ tenantId: t.id, userId, ...o })) });
+      await this.audit.record(tx, {
+        tenantId: t.id,
+        action: "staff.access_changed",
+        entityType: "employee",
+        entityId: id,
+        data: { from: before.map((r) => r.roleKey), role: body.role, overrides: tweaks.map((o) => ({ permission: o.permission, granted: o.granted })) },
+      });
+      return { role: body.role, areas: accessLevels(effectivePermissions([body.role], tweaks)), customised: tweaks.length > 0 };
+    });
   }
 
   // ── Time clock ──

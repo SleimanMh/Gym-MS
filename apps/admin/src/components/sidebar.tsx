@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  CalendarClock,
   CalendarDays,
   LayoutDashboard,
   Lock,
@@ -19,6 +20,7 @@ import {
 import { cn } from "@/lib/cn";
 
 const ICONS: Record<string, LucideIcon> = {
+  CalendarClock,
   LayoutDashboard,
   CalendarDays,
   Ticket,

@@ -41,6 +41,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     group: n.group,
     locked: !!n.feature && !features.includes(n.feature),
   }));
+  // Anyone on the team gets their own schedule (owners and managers also have the team calendar).
+  if (clock?.employee) items.splice(1, 0, { href: "/my-schedule", label: t("cal.mine"), icon: "CalendarClock", group: "gym", locked: false });
   items.push({ href: "/design-system", label: t("nav.designSystem"), icon: "Palette", group: "admin", locked: false });
 
   const role = me.roles.map((r) => ROLE_NAMES[r]?.[lang] ?? r).join(", ");

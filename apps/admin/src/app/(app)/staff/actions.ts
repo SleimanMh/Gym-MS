@@ -1,9 +1,10 @@
 "use server";
 
-import { parseMoney } from "@gym/shared";
+import { ACCESS_AREAS, parseMoney } from "@gym/shared";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { act, field } from "@/lib/act";
+import { ar3, en3 } from "@/lib/messages-phase3";
 
 /** A same-site path from a hidden "back" field ("//host" would be another site). */
 const safeBack = (v: string | undefined, fallback: string) => (v && v.startsWith("/") && !v.startsWith("//") ? v : fallback);
@@ -85,18 +86,28 @@ export async function clockOut(f: FormData) {
   await act("/v1/time-clock/out", { method: "POST", body: { employeeId: field(f, "employeeId") } }, await backPath(f));
 }
 
-export async function addShift(f: FormData) {
-  const back = safeBack(field(f, "back"), "/staff/rota");
+/** Activity typed in either language → its key when it's one of the suggestions. */
+function activityKey(v: string | undefined) {
+  if (!v) return undefined;
+  const k = (Object.keys(en3) as (keyof typeof en3)[]).find((key) => key.startsWith("act.") && (en3[key] === v || ar3[key] === v));
+  return k ? k.slice(4) : v;
+}
+
+/** Add or edit a calendar slot (the quick-add dialog). */
+export async function saveSlot(f: FormData) {
+  const back = safeBack(field(f, "back"), "/staff/schedule");
+  const id = field(f, "id");
   await act(
-    "/v1/shifts",
+    id ? `/v1/shifts/${id}` : "/v1/shifts",
     {
-      method: "POST",
+      method: id ? "PUT" : "POST",
       body: {
         employeeId: field(f, "employeeId"),
         locationId: field(f, "locationId"),
         date: field(f, "date"),
         start: field(f, "start"),
         end: field(f, "end"),
+        activity: activityKey(field(f, "activity")),
         note: field(f, "note"),
       },
     },
@@ -104,6 +115,23 @@ export async function addShift(f: FormData) {
   );
 }
 
+export async function deleteSlot(f: FormData) {
+  await act(`/v1/shifts/${field(f, "id")}`, { method: "DELETE" }, safeBack(field(f, "back"), "/staff/schedule"));
+}
+
 export async function removeShift(f: FormData) {
   await act(`/v1/shifts/${field(f, "id")}`, { method: "DELETE" }, safeBack(field(f, "back"), "/staff/rota"));
+}
+
+/** Owner sets someone's role and per-area access (Staff → profile → Access). */
+export async function saveAccess(f: FormData) {
+  const id = field(f, "id")!;
+  const role = field(f, "role");
+  const areas = Object.fromEntries(ACCESS_AREAS.map((a) => [a.key, field(f, `area.${a.key}`)]).filter(([, v]) => v));
+  await act(
+    `/v1/staff/${id}/access`,
+    { method: "PUT", body: { role, areas: role === "owner" || !Object.keys(areas).length ? undefined : areas } },
+    `/staff/${id}`,
+    () => `/staff/${id}?saved=access#access`,
+  );
 }

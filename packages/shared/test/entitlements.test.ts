@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { computeEntitlements, withinLimit, lowestPlanWith, PLAN_CATALOGUE } from "../src/entitlements";
-import { permissionsForRoles } from "../src/permissions";
+import { accessLevels, effectivePermissions, overridesFor, permissionsForRoles } from "../src/permissions";
 
 const plan = (code: keyof typeof PLAN_CATALOGUE) => [
   ...PLAN_CATALOGUE[code].features.map((featureKey) => ({ featureKey, enabled: true, limitValue: null })),
@@ -59,4 +59,26 @@ test("member role has no staff permissions", () => {
   assert.ok(p.every((x) => x.startsWith("self.")));
   assert.ok(permissionsForRoles(["owner"]).includes("finance.view"));
   assert.ok(!permissionsForRoles(["owner"]).includes("self.booking"));
+});
+
+
+test("access: overrides add and remove on top of the role; owners are never reduced", () => {
+  const trainer = effectivePermissions(["trainer"], [{ permission: "member.view", granted: false }, { permission: "report.view", granted: true }]);
+  assert.ok(!trainer.includes("member.view"));
+  assert.ok(trainer.includes("report.view"));
+  // Security permissions can't be granted by a tweak.
+  assert.ok(!effectivePermissions(["trainer"], [{ permission: "tenant.security.manage", granted: true }]).includes("tenant.security.manage"));
+  assert.deepEqual(effectivePermissions(["owner"], [{ permission: "finance.view", granted: false }]), permissionsForRoles(["owner"]));
+});
+
+test("access: overridesFor stores only what differs from the role, and round-trips to the chosen levels", () => {
+  assert.deepEqual(overridesFor("front_desk", accessLevels(permissionsForRoles(["front_desk"]))), []);
+  const o = overridesFor("front_desk", { members: "view", finance: "view", dashboard: "view" });
+  const levels = accessLevels(effectivePermissions(["front_desk"], o));
+  assert.equal(accessLevels(permissionsForRoles(["front_desk"])).members, "manage");
+  assert.equal(levels.members, "view");
+  assert.ok(!effectivePermissions(["front_desk"], o).includes("member.manage"));
+  assert.equal(levels.finance, "view");
+  assert.equal(levels.dashboard, "view");
+  assert.equal(levels.checkin, "view");
 });

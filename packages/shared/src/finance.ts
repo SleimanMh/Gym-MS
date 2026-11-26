@@ -160,6 +160,8 @@ export const shiftSchema = z
     date: dateStr,
     start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    /** What the slot is for ("Front desk", "Personal training"…). */
+    activity: optionalText(60),
     note: optionalText(200),
   })
   .refine((s) => s.end > s.start, { message: "end before start", path: ["end"] });
@@ -189,3 +191,12 @@ export const budgetSchema = z.object({
   amountMinor: z.coerce.number().int().min(0).max(1_000_000_000),
 });
 export type BudgetInput = z.infer<typeof budgetSchema>;
+
+/** Suggested activities for shift slots (staff can type their own). */
+export const SHIFT_ACTIVITIES = ["front_desk", "floor", "personal_training", "cleaning", "admin", "class_cover"] as const;
+
+export const calendarQuery = z.object({
+  from: dateStr,
+  to: dateStr,
+  employeeId: uuid.optional(),
+});

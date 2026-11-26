@@ -108,18 +108,25 @@ export async function seedStaffFinance(prisma: PrismaClient) {
       }
 
       // ── Rota: front desk and floor shifts, four weeks back and two weeks ahead ──
-      // [employee, weekdays, start hour, end hour, location]
-      const ROTA: [string, number[], number, number, number][] = [
-        ["Lea", [1, 3, 5, 6], 9, 14, 0],
-        ["Ziad", [0, 4], 10, 14, 1],
-        ["Fadi", [1, 3, 5], 6, 12, 0],
-        ["Fadi", [2, 4, 6], 15, 21, 1],
+      // [employee, weekdays, start hour, end hour, location, activity]
+      const ROTA: [string, number[], number, number, number, string][] = [
+        ["Lea", [1, 3, 5, 6], 9, 14, 0, "front_desk"],
+        ["Ziad", [0, 4], 10, 14, 1, "floor"],
+        ["Fadi", [1, 3, 5], 6, 12, 0, "cleaning"],
+        ["Fadi", [2, 4, 6], 15, 21, 1, "floor"],
+      ];
+      // Extra slots that overlap other people's on purpose (same time, different activity).
+      const EXTRA: [string, number[], number, number, number, string][] = [
+        ["Nadim", [1, 3], 10, 11, 0, "personal_training"],
+        ["Lara", [2, 4], 12, 13, 0, "personal_training"],
+        ["Hiba", [5], 11, 12, 1, "personal_training"],
+        ["Joelle", [1], 10, 13, 0, "admin"],
       ];
       const shifts = [];
       for (let d = addDays(today, -28); d <= addDays(today, 14); d = addDays(d, 1)) {
-        for (const [name, days, from, to, loc] of ROTA) {
+        for (const [name, days, from, to, loc, activity] of [...ROTA, ...EXTRA]) {
           if (!days.includes(weekday(d))) continue;
-          shifts.push({ tenantId: t.id, employeeId: emp.get(name)!.id, locationId: t.locations[loc]!.id, startsAt: at(d, from), endsAt: at(d, to) });
+          shifts.push({ tenantId: t.id, employeeId: emp.get(name)!.id, locationId: t.locations[loc]!.id, startsAt: at(d, from), endsAt: at(d, to), activity });
         }
       }
       await tx.shift.createMany({ data: shifts });
