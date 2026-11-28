@@ -1,17 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { ACCESS_AREAS, addDays, STAFF_ROLE_KEYS, lowestPlanWith, type AccessLevel } from "@gym/shared";
-import { AccessEditor } from "@/components/access-editor";
+import { addDays } from "@gym/shared";
 import { TeamCalendar } from "@/components/team-calendar";
 import { Button, Card, Input, Label, Notice, PageHeader, SectionTitle, Select } from "@/components/ui";
 import { ApiError, api, getMe } from "@/lib/api";
 import { fmtDateOnly, fmtDay, fmtTime, fmtTimeRange, money } from "@/lib/format";
 import { activityOptions, calLabels, loadWeek } from "@/lib/calendar";
-import type { MessageKey } from "@/lib/i18n";
 import { getT } from "@/lib/i18n";
 import { rateText, type Employee } from "@/lib/staff";
-import { clockIn, clockOut, deleteSlot, saveAccess, saveSlot, updateEmployee } from "../actions";
+import { clockIn, clockOut, deleteSlot, saveSlot, updateEmployee } from "../actions";
 import { PayFields } from "../pay-fields";
 
 interface Detail extends Employee {
@@ -22,7 +20,7 @@ interface Detail extends Employee {
 }
 
 /** One team member: this month at a glance, their rota, clock-ins, classes and pay settings. */
-export default async function EmployeePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; week?: string; saved?: string }> }) {
+export default async function EmployeePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; week?: string }> }) {
   const [{ id }, sp, { t, lang, err }, me] = await Promise.all([params, searchParams, getT(), getMe()]);
   if (!me?.permissions.includes("staff.view") || !me.tenant) notFound();
   let e: Detail;
@@ -34,19 +32,9 @@ export default async function EmployeePage({ params, searchParams }: { params: P
   }
   const canManage = me.permissions.includes("staff.manage");
   const canAccess = me.permissions.includes("tenant.security.manage");
-  const [locations, week, access] = await Promise.all([
+  const [locations, week] = await Promise.all([
     api<{ id: string; name: string }[]>("/v1/locations"),
     loadWeek("/v1/team-calendar", { week: sp.week, employeeId: e.id, tz: e.timezone, lang, t }),
-    canAccess
-      ? api<{
-          userId: string | null;
-          role: string | null;
-          areas: Record<string, AccessLevel> | null;
-          isSelf: boolean;
-          roleDefaults: Record<string, Record<string, AccessLevel>>;
-          customAllowed: boolean;
-        }>(`/v1/staff/${e.id}/access`)
-      : null,
   ]);
   const tz = e.timezone;
   const nf = new Intl.NumberFormat(lang === "ar" ? "ar-LB" : "en-GB", { maximumFractionDigits: 1 });
@@ -150,44 +138,12 @@ export default async function EmployeePage({ params, searchParams }: { params: P
       </section>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        {canAccess && access && (
-          <Card id="access" className="p-6">
-            <SectionTitle>{t("acc.title")}</SectionTitle>
-            <p className="-mt-1 mb-4 text-sm text-muted">{t("acc.subtitle", { name: e.firstName })}</p>
-            {sp.saved === "access" && <Notice tone="success">{t("acc.saved")}</Notice>}
-            {!access.userId ? (
-              <p className="rounded-2xl bg-sunken px-4 py-3 text-sm text-muted">{t("acc.noLogin")}</p>
-            ) : access.isSelf ? (
-              <p className="rounded-2xl bg-sunken px-4 py-3 text-sm text-muted">{t("acc.self")}</p>
-            ) : (
-              <AccessEditor
-                employeeId={e.id}
-                roles={STAFF_ROLE_KEYS.map((r) => ({ key: r, label: t(`acc.role.${r}` as MessageKey), help: t(`acc.roleHelp.${r}` as MessageKey) }))}
-                areas={ACCESS_AREAS.map((a) => ({
-                  key: a.key,
-                  label: t(`acc.area.${a.key}` as MessageKey),
-                  levels: a.manage.length ? ["none", "view", "manage"] : ["none", "view"],
-                }))}
-                roleDefaults={access.roleDefaults}
-                initialRole={access.role ?? "front_desk"}
-                initialAreas={access.areas ?? access.roleDefaults[access.role ?? "front_desk"] ?? {}}
-                customAllowed={access.customAllowed}
-                labels={{
-                  role: t("acc.role"),
-                  areas: t("acc.areas"),
-                  none: t("acc.level.none"),
-                  view: t("acc.level.view"),
-                  manage: t("acc.level.manage"),
-                  on: t("acc.level.on"),
-                  save: t("acc.save"),
-                  reset: t("acc.reset"),
-                  custom: t("acc.custom"),
-                  ownerAll: t("acc.ownerAll"),
-                  locked: t("acc.locked", { plan: (lowestPlanWith("identity.custom_roles") ?? "pro").replace(/^./, (c) => c.toUpperCase()) }),
-                }}
-                action={saveAccess}
-              />
-            )}
+        {canAccess && e.userId && (
+          <Card className="flex items-center justify-between gap-4 p-5 xl:col-span-2">
+            <span className="text-sm text-muted">{t("users.access")}</span>
+            <Link href={`/settings/users/${e.userId}`} className="text-sm font-semibold text-accent hover:underline">
+              {t("set.tab.users")}
+            </Link>
           </Card>
         )}
 

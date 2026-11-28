@@ -109,33 +109,32 @@ export function permissionsForRoles(roles: readonly string[]): Permission[] {
 export const PLATFORM_ROLES = ["super_admin", "support"] as const;
 export type PlatformRole = (typeof PLATFORM_ROLES)[number];
 
-// ───────────── Per-person access (Staff page) ─────────────
+// ───────────── Per-person access (Users & access) ─────────────
 
 /** Staff roles an owner can give someone (members are not staff). */
 export const STAFF_ROLE_KEYS = ["owner", "manager", "front_desk", "trainer", "accountant"] as const;
 export type StaffRoleKey = (typeof STAFF_ROLE_KEYS)[number];
 
 /**
- * What the owner sees in the access editor: one row per area of the app, each Hidden / View /
- * (Manage). `view` permissions open the area; `manage` adds the ones that change things.
- * Areas with no `manage` list are simply on or off.
+ * The access tree the owner ticks per person: one branch per area of the app, its permissions as
+ * leaves. The first leaf opens the area; the others need it (ticking one ticks the first, unticking
+ * the first unticks the branch). Security, billing and audit are never in the tree — owners only.
  */
-export const ACCESS_AREAS = [
-  { key: "dashboard", view: ["report.view"], manage: [] },
-  { key: "schedule", view: ["schedule.view"], manage: ["schedule.manage"] },
-  { key: "bookings", view: ["booking.view"], manage: ["booking.create", "booking.cancel"] },
-  { key: "members", view: ["member.view"], manage: ["member.manage", "member.export"] },
-  { key: "checkin", view: ["checkin.create"], manage: [] },
-  { key: "sales", view: ["sale.create"], manage: ["payment.take"] },
-  { key: "staff", view: ["staff.view"], manage: ["staff.manage"] },
-  { key: "finance", view: ["finance.view"], manage: ["finance.manage"] },
-  { key: "settings", view: ["tenant.settings.manage", "location.manage"], manage: [] },
-] as const satisfies readonly { key: string; view: readonly Permission[]; manage: readonly Permission[] }[];
-export type AccessAreaKey = (typeof ACCESS_AREAS)[number]["key"];
-export type AccessLevel = "none" | "view" | "manage";
+export const ACCESS_TREE = [
+  { key: "dashboard", permissions: ["report.view"] },
+  { key: "schedule", permissions: ["schedule.view", "schedule.manage"] },
+  { key: "bookings", permissions: ["booking.view", "booking.create", "booking.cancel"] },
+  { key: "members", permissions: ["member.view", "member.manage", "member.export"] },
+  { key: "checkin", permissions: ["checkin.create"] },
+  { key: "sales", permissions: ["sale.create", "payment.take"] },
+  { key: "staff", permissions: ["staff.view", "staff.manage"] },
+  { key: "finance", permissions: ["finance.view", "finance.manage"] },
+  { key: "settings", permissions: ["tenant.settings.manage", "location.manage"] },
+] as const satisfies readonly { key: string; permissions: readonly Permission[] }[];
+export type AccessAreaKey = (typeof ACCESS_TREE)[number]["key"];
 
-/** Permissions an owner may add or remove per person. Security, billing and audit stay with owners. */
-export const OVERRIDABLE_PERMISSIONS: Permission[] = ACCESS_AREAS.flatMap((a) => [...a.view, ...a.manage]);
+/** Permissions an owner may add or remove per person. */
+export const OVERRIDABLE_PERMISSIONS: Permission[] = ACCESS_TREE.flatMap((a) => [...a.permissions]);
 
 export interface PermissionOverride {
   permission: string;
@@ -157,36 +156,32 @@ export function effectivePermissions(roles: readonly string[], overrides: readon
   return [...out].sort();
 }
 
-/**
- * Level per area for a set of permissions: open when all its view permissions are there; "manage"
- * when any of its manage permissions are (front desk edits members but doesn't export them).
- */
-export function accessLevels(perms: readonly string[]): Record<AccessAreaKey, AccessLevel> {
-  const all = (list: readonly string[]) => list.every((p) => perms.includes(p));
-  const any = (list: readonly string[]) => list.some((p) => perms.includes(p));
-  return Object.fromEntries(
-    ACCESS_AREAS.map((a) => [a.key, !all(a.view) ? "none" : a.manage.length && any(a.manage) ? "manage" : "view"]),
-  ) as Record<AccessAreaKey, AccessLevel>;
+/** The ticked leaves of the tree for a set of permissions. */
+export function treeSelection(perms: readonly string[]): Permission[] {
+  return OVERRIDABLE_PERMISSIONS.filter((p) => perms.includes(p));
+}
+
+/** Applies the tree rule: a branch's other leaves need its first leaf. */
+export function normaliseSelection(selected: readonly string[]): Permission[] {
+  const set = new Set(selected.filter((p) => (OVERRIDABLE_PERMISSIONS as string[]).includes(p)));
+  for (const a of ACCESS_TREE) {
+    if (a.permissions.slice(1).some((p) => set.has(p))) set.add(a.permissions[0]);
+  }
+  return OVERRIDABLE_PERMISSIONS.filter((p) => set.has(p));
 }
 
 /**
- * The overrides that turn a role's permissions into the chosen levels — only what differs from the
- * role is stored, so changing a role's defaults later still reaches everyone who wasn't customised.
+ * The overrides that turn a role into the ticked tree — only what differs from the role is stored,
+ * so a later change to a role's defaults still reaches everyone who wasn't customised.
  */
-export function overridesFor(role: StaffRoleKey, levels: Partial<Record<AccessAreaKey, AccessLevel>>): PermissionOverride[] {
+export function overridesFor(role: StaffRoleKey, selected: readonly string[]): PermissionOverride[] {
   if (role === "owner") return [];
   const base = new Set<string>(permissionsForRoles([role]));
-  const baseLevels = accessLevels([...base]);
+  const want = new Set<string>(normaliseSelection(selected));
   const out: PermissionOverride[] = [];
-  for (const a of ACCESS_AREAS) {
-    const level = levels[a.key];
-    // Unchanged areas keep the role's exact permissions (a role may hold part of "manage").
-    if (!level || level === baseLevels[a.key]) continue;
-    const want = new Set<string>(level === "none" ? [] : level === "view" || !a.manage.length ? a.view : [...a.view, ...a.manage]);
-    for (const p of [...a.view, ...a.manage]) {
-      if (want.has(p) && !base.has(p)) out.push({ permission: p, granted: true });
-      if (!want.has(p) && base.has(p)) out.push({ permission: p, granted: false });
-    }
+  for (const p of OVERRIDABLE_PERMISSIONS) {
+    if (want.has(p) && !base.has(p)) out.push({ permission: p, granted: true });
+    if (!want.has(p) && base.has(p)) out.push({ permission: p, granted: false });
   }
   return out;
 }

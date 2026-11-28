@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { PLAN_CODES } from "./entitlements";
-import { ACCESS_AREAS, STAFF_ROLE_KEYS } from "./permissions";
+import { OVERRIDABLE_PERMISSIONS, STAFF_ROLE_KEYS } from "./permissions";
 
 export const languageSchema = z.enum(["en", "ar"]);
 export type Language = z.infer<typeof languageSchema>;
@@ -73,11 +73,41 @@ export interface MeResponse {
   entitlements: { planCode: string | null; features: string[]; limits: Record<string, number | null> } | null;
 }
 
-/** PUT /v1/staff/:id/access — one role, plus optional per-area levels (Pro: identity.custom_roles). */
-export const staffAccessSchema = z.object({
+// ───────────── Sign-in and accounts (ADR 0007) ─────────────
+
+const email = z.string().trim().toLowerCase().email().max(254);
+
+/** Passwords people choose: 10+ characters with at least one letter and one digit. */
+export const newPasswordSchema = z
+  .string()
+  .min(10, "PASSWORD_TOO_SHORT")
+  .max(128)
+  .refine((p) => /[A-Za-z]/.test(p) && /\d/.test(p), "PASSWORD_TOO_WEAK");
+
+export const loginSchema = z.object({ email, password: z.string().min(1).max(128) });
+export type LoginInput = z.infer<typeof loginSchema>;
+
+/** First sign-in (or any time): current password (the emailed one at first) + a new one. */
+export const changePasswordSchema = z
+  .object({ email, currentPassword: z.string().min(1).max(128), newPassword: newPasswordSchema })
+  .refine((v) => v.currentPassword !== v.newPassword, { message: "PASSWORD_UNCHANGED", path: ["newPassword"] });
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
+/** The access tree: ticked permissions (only the ones owners may hand out). */
+const accessSelection = z.array(z.enum(OVERRIDABLE_PERMISSIONS as [string, ...string[]])).max(OVERRIDABLE_PERMISSIONS.length);
+
+/** POST /v1/users — owner creates a sign-in; the system emails a generated password. */
+export const createUserSchema = z.object({
+  firstName: z.string().trim().min(1).max(80),
+  lastName: z.string().trim().min(1).max(80),
+  email,
   role: z.enum(STAFF_ROLE_KEYS),
-  areas: z
-    .record(z.enum(ACCESS_AREAS.map((a) => a.key) as [string, ...string[]]), z.enum(["none", "view", "manage"]))
-    .optional(),
+  permissions: accessSelection.optional(),
 });
-export type StaffAccessInput = z.infer<typeof staffAccessSchema>;
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+
+/** PUT /v1/users/:id/access — role, plus (Pro) the ticked tree. */
+export const userAccessSchema = z.object({ role: z.enum(STAFF_ROLE_KEYS), permissions: accessSelection.optional() });
+export type UserAccessInput = z.infer<typeof userAccessSchema>;
+
+export const userStatusSchema = z.object({ status: z.enum(["active", "disabled"]) });

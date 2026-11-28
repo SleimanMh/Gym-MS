@@ -14,8 +14,10 @@ export type OutboxEventType =
   | "membership.expiring"
   | "member.login_code"
   | "lead.created"
-  /** Create the person's Keycloak account and email them a set-password link (worker). */
-  | "user.invite";
+  /** Email a new staff account its generated password (scrubbed once sent). */
+  | "user.invite"
+  /** Email a reset, generated password (scrubbed once sent). */
+  | "user.password_reset";
 
 @Injectable()
 export class OutboxService {

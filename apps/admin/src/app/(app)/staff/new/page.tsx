@@ -3,17 +3,16 @@ import { notFound } from "next/navigation";
 import { Button, Card, Input, Label, Notice, PageHeader, Select } from "@/components/ui";
 import { api, getMe } from "@/lib/api";
 import { localDateIn } from "@/lib/format";
-import { getT } from "@/lib/i18n";
+import { STAFF_ROLE_KEYS } from "@gym/shared";
+import { getT, type MessageKey } from "@/lib/i18n";
 import { createEmployee } from "../actions";
 import { PayFields } from "../pay-fields";
 
 export default async function NewEmployeePage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const [{ t, err }, me, sp] = await Promise.all([getT(), getMe(), searchParams]);
   if (!me?.permissions.includes("staff.manage") || !me.tenant) notFound();
-  const [locations, logins] = await Promise.all([
-    api<{ id: string; name: string }[]>("/v1/locations"),
-    api<{ id: string; email: string; firstName: string; lastName: string }[]>("/v1/staff/logins"),
-  ]);
+  const locations = await api<{ id: string; name: string }[]>("/v1/locations");
+  const canInvite = me.permissions.includes("tenant.security.manage");
   const opt = t("common.optional");
 
   return (
@@ -64,18 +63,28 @@ export default async function NewEmployeePage({ searchParams }: { searchParams: 
               <Label htmlFor="startedOn">{t("st.f.started")}</Label>
               <Input id="startedOn" name="startedOn" type="date" defaultValue={localDateIn(new Date(), me.tenant.timezone)} />
             </div>
-            <div>
-              <Label htmlFor="userId">{t("st.f.login")}</Label>
-              <Select id="userId" name="userId" defaultValue="">
-                <option value="">{t("st.f.noLogin")}</option>
-                {logins.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.firstName} {u.lastName} · {u.email}
-                  </option>
-                ))}
-              </Select>
-            </div>
           </div>
+          {canInvite && (
+            <div className="flex flex-col gap-3 rounded-2xl bg-sunken p-4">
+              <label className="flex items-start gap-2.5 text-sm">
+                <input type="checkbox" name="signIn" className="mt-0.5 size-4 accent-[var(--accent)]" />
+                <span>
+                  <span className="block font-medium">{t("users.giveSignIn")}</span>
+                  <span className="block text-xs text-muted">{t("users.giveSignInHelp")}</span>
+                </span>
+              </label>
+              <div className="max-w-xs">
+                <Label htmlFor="role">{t("users.role")}</Label>
+                <Select id="role" name="role" defaultValue="front_desk">
+                  {STAFF_ROLE_KEYS.filter((r) => r !== "owner").map((r) => (
+                    <option key={r} value={r}>
+                      {t(`acc.role.${r}` as MessageKey)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+          )}
           <div className="flex justify-end pt-2">
             <Button type="submit">{t("st.add")}</Button>
           </div>

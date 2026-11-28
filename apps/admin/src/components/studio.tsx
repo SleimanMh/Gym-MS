@@ -92,53 +92,6 @@ export function NextClassHero({
   );
 }
 
-/** Dark card with a semicircle gauge: share of class spots taken this month. */
-export function FillGauge({
-  title,
-  pct,
-  caption,
-  stats,
-}: {
-  title: string;
-  pct: number | null;
-  caption: string;
-  stats: { label: string; value: string }[];
-}) {
-  const r = 80;
-  const len = Math.PI * r;
-  const value = Math.max(0, Math.min(100, pct ?? 0));
-  return (
-    <section className="flex flex-col rounded-[var(--radius-card)] bg-ink p-6 text-white">
-      <h2 className="font-semibold">{title}</h2>
-      <div className="relative mx-auto mt-4 w-full max-w-[240px]">
-        <svg viewBox="0 0 200 112" className="w-full" aria-hidden>
-          <path d={`M20,100 A${r},${r} 0 0 1 180,100`} fill="none" stroke="var(--color-ink-soft)" strokeWidth="16" strokeLinecap="round" />
-          <path
-            d={`M20,100 A${r},${r} 0 0 1 180,100`}
-            fill="none"
-            stroke="var(--accent, #6d5df6)"
-            strokeWidth="16"
-            strokeLinecap="round"
-            strokeDasharray={`${(value / 100) * len} ${len}`}
-          />
-        </svg>
-        <div className="absolute inset-x-0 bottom-0 text-center">
-          <div className="text-[40px] font-semibold leading-none tabular-nums">{pct === null ? "—" : `${pct}%`}</div>
-          <div className="mt-1 text-xs text-white/60">{caption}</div>
-        </div>
-      </div>
-      <dl className="mt-6 grid grid-cols-3 gap-2 text-center">
-        {stats.map((s) => (
-          <div key={s.label}>
-            <dd className="text-lg font-semibold tabular-nums">{s.value}</dd>
-            <dt className="text-xs text-white/55">{s.label}</dt>
-          </div>
-        ))}
-      </dl>
-    </section>
-  );
-}
-
 /** Headline number with an icon and an optional change pill. */
 export function StatCard({
   icon: Icon,

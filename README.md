@@ -4,7 +4,7 @@ Multi-tenant gym management platform: each gym is a tenant with its own login, b
 and its booking widget plugs into any website. The full plan is in [docs/PLAN.md](docs/PLAN.md); rules for
 working in this repo are in [CLAUDE.md](CLAUDE.md).
 
-**Status: Phase 1 (MVP) built.** Still open from Phase 0: Keycloak login in the admin app, staging deploy. See the progress list at the end of docs/PLAN.md.
+**Status: Phase 1 (MVP) and most of Phase 3 built.** Still open from Phase 0: staging deploy. See the progress list at the end of docs/PLAN.md.
 
 ## Layout
 
@@ -41,7 +41,9 @@ pnpm dev                 # API :4000, admin :3000, widget demo website :5173
 pnpm --filter @gym/api dev:worker   # emails, reminders, session generation (needs Redis)
 ```
 
-Open http://localhost:3000 and sign in as one of the seeded users (development sign-in; Keycloak replaces it).
+Each gym has its own address. Open http://ironfit.localhost:3000 (or http://pulse.localhost:3000) and sign in
+with a seeded staff email and the demo password (`DEMO_PASSWORD` in `packages/db/prisma/seed.ts`), or as a
+member with an emailed code (emails land in Mailpit, http://localhost:8025). Platform staff use http://localhost:3000.
 
 | URL | What |
 |---|---|

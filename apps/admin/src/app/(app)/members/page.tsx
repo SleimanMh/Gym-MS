@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { CalendarClock, Search, UserPlus, Users, UserX, Wallet } from "lucide-react";
+import { Search, UserPlus } from "lucide-react";
 import { EmptyState } from "@/components/blocks";
-import { StatCard } from "@/components/studio";
 import { Avatar, Badge, Button, Card, PageHeader, Tabs } from "@/components/ui";
 import { api, getMe } from "@/lib/api";
 import { fmtDateOnly, relativeDays } from "@/lib/format";
@@ -48,22 +47,6 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
           ) : undefined
         }
       />
-
-      {/* Headline numbers double as shortcuts to each list */}
-      <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {(
-          [
-            ["active", Users],
-            ["pending", Wallet],
-            ["expiring", CalendarClock],
-            ["none", UserX],
-          ] as const
-        ).map(([f, Icon]) => (
-          <Link key={f} href={href(f)} className="rounded-[var(--radius-card)] transition-subtle hover:ring-2 hover:ring-accent/30" aria-current={f === status ? "page" : undefined}>
-            <StatCard icon={Icon} label={t(`mem.tab.${f}`)} value={new Intl.NumberFormat(lang === "ar" ? "ar-LB" : "en-GB").format(counts[f])} />
-          </Link>
-        ))}
-      </div>
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <Tabs items={FILTERS.map((f) => ({ href: href(f), label: t(`mem.tab.${f}`), active: f === status, count: counts[f] }))} />

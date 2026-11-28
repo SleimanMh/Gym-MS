@@ -3,7 +3,8 @@
  * Idempotent — safe to run repeatedly. Runs as the APP role (scripts/with-env.mjs), so RLS applies
  * and tenant data is written through withTenant() exactly like the API.
  *
- * Demo logins (dev tokens; POST /v1/dev/token):
+ * Demo logins — email + password "Gym-demo-2026" at the gym's own address (ADR 0007),
+ * e.g. http://ironfit.localhost:3000 (platform staff: http://localhost:3000):
  *   platform@gym.local                         — platform super admin
  *   owner@ironfit.test / frontdesk@ironfit.test / coach@ironfit.test / accounts@ironfit.test / member@ironfit.test — "ironfit" (Pro)
  *   owner@pulse.test                           — tenant "pulse" (Starter)
@@ -16,7 +17,7 @@ import {
   PLAN_CODES,
   type RoleKey,
 } from "@gym/shared";
-import { createPrismaClient, hashApiKey, withTenant } from "../src/index";
+import { createPrismaClient, hashApiKey, hashPassword, withTenant } from "../src/index";
 import { DEMO } from "../src/demo";
 import { seedDemo } from "./seed-demo";
 import { seedPhase1 } from "./seed-phase1";
@@ -63,12 +64,19 @@ async function seedCatalogue() {
   }
 }
 
+/** Every seeded staff/platform login signs in with this password (development data only). */
+export const DEMO_PASSWORD = "Gym-demo-2026";
+let demoHash: Promise<string> | null = null;
+
 async function upsertUser(email: string, firstName: string, lastName: string) {
-  return prisma.user.upsert({
+  const user = await prisma.user.upsert({
     where: { email },
     create: { email, firstName, lastName, authSubject: `dev|${email}` },
     update: { firstName, lastName },
   });
+  if (user.passwordHash) return user;
+  demoHash ??= hashPassword(DEMO_PASSWORD);
+  return prisma.user.update({ where: { id: user.id }, data: { passwordHash: await demoHash } });
 }
 
 async function seedTenant(t: (typeof DEMO)[keyof typeof DEMO]) {
@@ -139,6 +147,7 @@ async function seedTenant(t: (typeof DEMO)[keyof typeof DEMO]) {
         update: { status: "active" },
       });
       await tx.userRole.deleteMany({ where: { tenantId: t.id, userId: u.record.id } });
+      await tx.userPermissionOverride.deleteMany({ where: { userId: u.record.id } }); // demo users get plain role access
       await tx.userRole.createMany({
         data: u.roles.map((roleKey) => {
           if (!(roleKey in DEFAULT_ROLES)) throw new Error(`unknown role ${roleKey}`);

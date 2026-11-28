@@ -105,8 +105,8 @@ d("tenant isolation (HTTP)", () => {
     expect(res.body.entitlements.planCode).toBe("pro");
   });
 
-  // Keycloak tokens carry no gym; the admin sends the chosen gym as x-tenant-slug (ADR 0003).
-  it("lets a signed-in person choose a gym only among those they belong to", async () => {
+  // A token without a gym plus the gym from the address (x-tenant-slug): only gyms you belong to.
+  it("accepts a gym from the address only if the person belongs to it", async () => {
     const auth = `Bearer ${await token("owner@ironfit.test")}`; // no gym in the token
     const own = await request(app.getHttpServer()).get("/v1/locations").set("authorization", auth).set("x-tenant-slug", "ironfit");
     expect(own.status).toBe(200);
@@ -115,33 +115,5 @@ d("tenant isolation (HTTP)", () => {
     expect(other.body.code).toBe("NOT_A_MEMBER_OF_TENANT");
     const me = await request(app.getHttpServer()).get("/v1/me").set("authorization", auth).set("x-tenant-slug", "pulse");
     expect(me.body.tenant).toBeNull();
-    const gyms = await request(app.getHttpServer()).get("/v1/me/tenants").set("authorization", auth);
-    expect((gyms.body as { slug: string }[]).map((g) => g.slug)).toEqual(["ironfit"]);
-  });
-
-  it("invites a new gym's owner: the worker creates their sign-in account", async () => {
-    const run = Date.now().toString(36);
-    const created = await request(app.getHttpServer())
-      .post("/v1/platform/tenants")
-      .set("authorization", `Bearer ${await token("platform@gym.local")}`)
-      .send({ slug: `gym-${run}`, name: `Test Gym ${run}`, owner: { email: `owner.${run}@test.dev`, firstName: "Olga", lastName: "Owner" } });
-    expect(created.status).toBe(201);
-
-    const { createPrismaClient, withTenant } = await import("@gym/db");
-    const { dispatchOutbox } = await import("../../src/modules/notifications/jobs");
-    const prisma = createPrismaClient(process.env.DATABASE_URL);
-    const invited: { email: string }[] = [];
-    try {
-      const event = await withTenant(prisma, created.body.id, (tx) => tx.outboxEvent.findFirst({ where: { type: "user.invite" } }));
-      expect(event?.payload).toMatchObject({ email: `owner.${run}@test.dev`, firstName: "Olga" });
-
-      const identity = { invite: async (u: { email: string }) => void invited.push(u) };
-      for (let i = 0; i < 10 && !invited.length; i++) {
-        await dispatchOutbox(prisma, { send: async () => undefined }, { publicAppUrl: "http://localhost:3000", identity });
-      }
-      expect(invited.map((u) => u.email)).toContain(`owner.${run}@test.dev`);
-    } finally {
-      await prisma.$disconnect();
-    }
   });
 });

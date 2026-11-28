@@ -5,6 +5,7 @@ import { PrismaService } from "../../infra/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EntitlementsService } from "../entitlements/entitlements.service";
 import { OutboxService } from "../notifications/outbox.service";
+import { provisionAccount } from "../users/accounts";
 
 /** Your side of the product: onboard gyms and assign plans (PLAN.md section 5, platform roles). */
 @Injectable()
@@ -67,12 +68,6 @@ export class PlatformService {
           trialEndsAt: new Date(Date.now() + 14 * 24 * 3600 * 1000),
         },
       });
-      const owner = await tx.user.upsert({
-        where: { email: input.owner.email },
-        create: { email: input.owner.email, firstName: input.owner.firstName, lastName: input.owner.lastName },
-        update: {},
-      });
-
       await setTenant(tx, tenant.id);
       await tx.tenantSettings.create({ data: { tenantId: tenant.id } });
       await tx.location.create({
@@ -82,17 +77,15 @@ export class PlatformService {
       await tx.expenseCategory.createMany({
         data: DEFAULT_EXPENSE_CATEGORIES.map((c) => ({ tenantId: tenant.id, key: c.key, name: c[input.defaultLanguage] })),
       });
-      await tx.tenantMembership.create({ data: { tenantId: tenant.id, userId: owner.id, status: "active" } });
-      await tx.userRole.create({ data: { tenantId: tenant.id, userId: owner.id, roleKey: "owner" } });
-      // The owner gets a sign-in account and a "set your password" email (worker → Keycloak).
-      // Idempotent: someone who already has an account just gets access to the new gym.
-      await this.outbox.enqueue(
-        tx,
-        tenant.id,
-        "user.invite",
-        { userId: owner.id, email: owner.email, firstName: owner.firstName, lastName: owner.lastName },
-        `user.invite:${owner.id}`,
-      );
+      // The owner gets a sign-in with a generated password emailed to them (or, if they already
+      // have an account, access to this gym with their current password). ADR 0007.
+      const owner = await provisionAccount(tx, this.outbox, tenant.id, {
+        email: input.owner.email,
+        firstName: input.owner.firstName,
+        lastName: input.owner.lastName,
+        role: "owner",
+        overrides: [],
+      });
       await this.audit.record(tx, {
         tenantId: tenant.id,
         action: "tenant.created",
@@ -101,7 +94,7 @@ export class PlatformService {
         data: { planCode: input.planCode },
       });
 
-      return { id: tenant.id, slug: tenant.slug, name: tenant.name, planCode: plan.code, ownerUserId: owner.id };
+      return { id: tenant.id, slug: tenant.slug, name: tenant.name, planCode: plan.code, ownerUserId: owner.userId };
     });
   }
 

@@ -8,7 +8,6 @@ import {
   LayoutDashboard,
   Lock,
   LogOut,
-  Palette,
   Settings,
   Ticket,
   TrendingUp,
@@ -29,7 +28,6 @@ const ICONS: Record<string, LucideIcon> = {
   UserCog,
   Wallet,
   Settings,
-  Palette,
 };
 
 export interface SidebarItem {

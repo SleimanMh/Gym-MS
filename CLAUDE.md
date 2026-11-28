@@ -8,7 +8,8 @@ Project skills in `.claude/skills/` hold the step-by-step workflows — use them
 
 ## Stack
 pnpm + Turborepo, NestJS API, Next.js admin, Prisma + PostgreSQL 16, Redis + BullMQ,
-Keycloak (Organizations), Tailwind + shadcn/ui, Web Components for the widget.
+email + password sign-in issued by the API (ADR 0007; Keycloak tokens still accepted for SSO),
+Tailwind + shadcn/ui, Web Components for the widget. Each gym has its own address: `{slug}.localhost:3000`.
 
 ## Tenancy rules (never break these)
 - Every tenant-owned table has tenant_id UUID NOT NULL + RLS policy + FK to tenants + index.

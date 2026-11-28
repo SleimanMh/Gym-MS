@@ -1,6 +1,6 @@
 "use server";
 
-import { ACCESS_AREAS, parseMoney } from "@gym/shared";
+import { parseMoney } from "@gym/shared";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { act, field } from "@/lib/act";
@@ -39,6 +39,16 @@ function payFields(f: FormData, back: string) {
 
 export async function createEmployee(f: FormData) {
   const back = "/staff/new";
+  let userId: string | undefined;
+  // "Give them a sign-in": create the account first (the API emails a temporary password).
+  if (f.get("signIn") === "on") {
+    const r = await act<{ userId: string }>(
+      "/v1/users",
+      { method: "POST", body: { firstName: field(f, "firstName"), lastName: field(f, "lastName"), email: field(f, "email"), role: field(f, "role") } },
+      back,
+    );
+    userId = r.userId;
+  }
   await act<{ id: string }>(
     "/v1/staff",
     {
@@ -52,7 +62,7 @@ export async function createEmployee(f: FormData) {
         ...payFields(f, back),
         homeLocationId: field(f, "homeLocationId"),
         startedOn: field(f, "startedOn"),
-        userId: field(f, "userId"),
+        userId,
       },
     },
     back,
@@ -121,17 +131,4 @@ export async function deleteSlot(f: FormData) {
 
 export async function removeShift(f: FormData) {
   await act(`/v1/shifts/${field(f, "id")}`, { method: "DELETE" }, safeBack(field(f, "back"), "/staff/rota"));
-}
-
-/** Owner sets someone's role and per-area access (Staff → profile → Access). */
-export async function saveAccess(f: FormData) {
-  const id = field(f, "id")!;
-  const role = field(f, "role");
-  const areas = Object.fromEntries(ACCESS_AREAS.map((a) => [a.key, field(f, `area.${a.key}`)]).filter(([, v]) => v));
-  await act(
-    `/v1/staff/${id}/access`,
-    { method: "PUT", body: { role, areas: role === "owner" || !Object.keys(areas).length ? undefined : areas } },
-    `/staff/${id}`,
-    () => `/staff/${id}?saved=access#access`,
-  );
 }

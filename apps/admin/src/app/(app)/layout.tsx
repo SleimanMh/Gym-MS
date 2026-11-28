@@ -20,8 +20,8 @@ const ROLE_NAMES: Record<string, { en: string; ar: string }> = {
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const me = await getMe();
   if (!me) redirect("/login");
-  // Signed in but no gym chosen (or not a member of the chosen one): pick a gym.
-  if (!me.tenant) redirect("/select-gym");
+  // The gym comes from the address (ADR 0007); platform staff on the bare address go to their console.
+  if (!me.tenant) redirect(me.platformRole ? "/platform" : "/login");
 
   const { t, lang } = await getT();
   const features = me.entitlements?.features ?? [];
@@ -43,7 +43,6 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   }));
   // Anyone on the team gets their own schedule (owners and managers also have the team calendar).
   if (clock?.employee) items.splice(1, 0, { href: "/my-schedule", label: t("cal.mine"), icon: "CalendarClock", group: "gym", locked: false });
-  items.push({ href: "/design-system", label: t("nav.designSystem"), icon: "Palette", group: "admin", locked: false });
 
   const role = me.roles.map((r) => ROLE_NAMES[r]?.[lang] ?? r).join(", ");
 

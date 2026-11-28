@@ -12,13 +12,14 @@ import { IdentityModule } from "./modules/identity/identity.module";
 import { PlatformModule } from "./modules/platform/platform.module";
 import { RequestContextMiddleware } from "./modules/tenancy/request-context.middleware";
 import { TenancyModule } from "./modules/tenancy/tenancy.module";
+import { UsersModule } from "./modules/users/users.module";
 
 /**
  * Modular monolith (PLAN.md section 3). One folder per domain under src/modules.
  * Phase 0: tenancy, identity, entitlements, platform, audit, health. Phase 1: GymModule.
  */
 @Module({
-  imports: [InfraModule, EntitlementsModule, IdentityModule, TenancyModule, PlatformModule, GymModule],
+  imports: [InfraModule, EntitlementsModule, IdentityModule, TenancyModule, PlatformModule, GymModule, UsersModule],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: AccessGuard }],
 })

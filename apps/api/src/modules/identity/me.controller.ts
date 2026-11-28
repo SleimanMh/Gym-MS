@@ -40,11 +40,4 @@ export class MeController {
       entitlements,
     };
   }
-
-  /** Gyms this person belongs to — the "pick your gym" step after login. */
-  @Get("tenants")
-  @AuthenticatedOnly()
-  tenants() {
-    return this.identity.tenantsForUser(requirePrincipal().userId);
-  }
 }

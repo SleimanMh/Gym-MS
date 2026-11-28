@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft, ChevronRight, Info, Trophy } from "lucide-react";
+import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { LockedFeature } from "@/components/blocks";
 import { Avatar, Card, FillMeter, PageHeader, Tabs } from "@/components/ui";
 import { api, getMe } from "@/lib/api";
@@ -54,14 +54,6 @@ export default async function PerformancePage({ searchParams }: { searchParams: 
   const value = metric[sort];
   const ranked = [...data.rows].filter((r) => value(r) > 0).sort((a, b) => value(b) - value(a) || a.employee.firstName.localeCompare(b.employee.firstName));
   const rest = data.rows.filter((r) => value(r) <= 0);
-  const headline = (r: Row) =>
-    sort === "classes"
-      ? { big: nf.format(r.classesTaught), small: t("perf.by.classes") }
-      : sort === "fill"
-        ? { big: pct(r.fillPct), small: t("perf.spots", { b: nf.format(r.spotsBooked), c: nf.format(r.spotsOffered) }) }
-        : sort === "checkins"
-          ? { big: nf.format(r.attended), small: t("perf.by.checkins") }
-          : { big: m(r.salesMinor), small: t("perf.soldN", { n: nf.format(r.membershipsSold) }) };
 
   return (
     <>
@@ -102,39 +94,6 @@ export default async function PerformancePage({ searchParams }: { searchParams: 
         </Card>
       ) : (
         <>
-          {/* Top three: the leader in the accent, the next two in white */}
-          <ol className="mb-5 grid gap-4 md:grid-cols-3">
-            {ranked.slice(0, 3).map((r, i) => {
-              const h = headline(r);
-              const lead = i === 0;
-              return (
-                <li key={r.employee.id}>
-                  <Link
-                    href={`/staff/${r.employee.id}`}
-                    className={cn(
-                      "transition-subtle flex h-full flex-col rounded-[var(--radius-card)] p-5 hover:ring-2 hover:ring-accent/30",
-                      lead ? "bg-accent text-accent-fg" : "bg-surface shadow-[0_1px_2px_rgba(18,18,24,0.04)]",
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className={cn("flex size-8 items-center justify-center rounded-full text-sm font-bold", lead ? "bg-white text-accent-deep" : "bg-sunken text-muted")}>
-                        {lead ? <Trophy size={15} aria-label="1" /> : i + 1}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-semibold">
-                          {r.employee.firstName} {r.employee.lastName}
-                        </span>
-                        <span className={cn("block truncate text-xs", lead ? "text-white/75" : "text-faint")}>{r.employee.title}</span>
-                      </span>
-                    </div>
-                    <p className="mt-5 text-[34px] font-semibold leading-none tabular-nums">{h.big}</p>
-                    <p className={cn("mt-1 text-sm", lead ? "text-white/80" : "text-muted")}>{h.small}</p>
-                  </Link>
-                </li>
-              );
-            })}
-          </ol>
-
           <Card className="overflow-x-auto p-0">
             <table className="w-full min-w-[900px] text-sm">
               <thead className="text-muted">

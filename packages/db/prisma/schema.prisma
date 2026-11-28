@@ -179,6 +179,16 @@ model User {
   lastName    String    @map("last_name")
   phone       String?
   lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(3)
+  /// Email + password sign-in (ADR 0007). scrypt hash; null = no password yet.
+  passwordHash       String?   @map("password_hash")
+  /// Set when the system generated the password (new account, reset): must choose one at next sign-in.
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  /// Generated passwords stop working after this.
+  passwordExpiresAt  DateTime? @map("password_expires_at") @db.Timestamptz(3)
+  failedLogins       Int       @default(0) @map("failed_logins")
+  lockedUntil        DateTime? @map("locked_until") @db.Timestamptz(3)
+  /// Bumped on password change/reset: older sign-in tokens stop working.
+  sessionVersion     Int       @default(1) @map("session_version")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 

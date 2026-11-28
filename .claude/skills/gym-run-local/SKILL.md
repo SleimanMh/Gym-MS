@@ -37,17 +37,24 @@ docker compose -f infra/docker/docker-compose.yml up -d postgres redis mailpit
 
 | What | URL |
 |---|---|
-| Admin (staff) + platform console | http://localhost:3000 (sign in at `/login`) |
+| IronFit (Pro, English): staff + member sign-in | http://ironfit.localhost:3000 |
+| Pulse (Starter, Arabic) | http://pulse.localhost:3000 |
+| Platform console / "go to your gym" | http://localhost:3000 |
 | Example gym website with the widget | http://localhost:5173 |
 | Hosted booking page | http://localhost:3000/book/ironfit |
 | Emails (Mailpit) | http://localhost:8025 |
 | API health | http://localhost:4000/health/ready |
 
-## Demo logins (dev sign-in, `/login`)
+## Demo logins (ADR 0007)
 
-`owner@ironfit.test` (Pro, English) · `frontdesk@ironfit.test` · `coach@ironfit.test` · `accounts@ironfit.test` (accountant: staff + finance) ·
-`member@ironfit.test` (no staff access) · `owner@pulse.test` (Starter, Arabic) · `platform@gym.local`.
-Members sign in on the widget with their email; the 6-digit code arrives in Mailpit.
+Each gym has its own address (`{slug}.localhost:3000`, works in Chrome/Edge without hosts-file edits).
+Staff sign in there with email + the demo password (`DEMO_PASSWORD` in `packages/db/prisma/seed.ts`):
+`owner@ironfit.test` · `frontdesk@ironfit.test` · `coach@ironfit.test` · `accounts@ironfit.test` (IronFit),
+`owner@pulse.test` (Pulse), and `platform@gym.local` at the bare http://localhost:3000.
+Members: the **Member** tab on the gym's sign-in page, e.g. `member@ironfit.test`; the 6-digit code
+arrives in Mailpit. New staff created in Settings → Users & access get their temporary password by
+email (Mailpit) and choose their own at first sign-in.
+Tests still mint tokens with `POST /v1/dev/token` (AUTH_DEV_TOKENS=true outside production).
 Widget publishable key: `pk_dev_ironfit_publishable_key_0001`.
 
 When driving the admin with browser tools and clicks fail because the window isn't drawing, submit

@@ -8,7 +8,6 @@ import {
   NotFoundException,
   Param,
   ParseUUIDPipe,
-  ForbiddenException,
   Patch,
   Post,
   Put,
@@ -17,17 +16,10 @@ import {
 import { z } from "zod";
 import { Prisma, type TenantTx } from "@gym/db";
 import {
-  accessLevels,
   addDays,
   addMonths,
   calendarQuery,
   clockSchema,
-  effectivePermissions,
-  overridesFor,
-  permissionsForRoles,
-  staffAccessSchema,
-  STAFF_ROLE_KEYS,
-  type StaffAccessInput,
   employeeSchema,
   localDate,
   minorDigits,
@@ -45,7 +37,6 @@ import { requirePrincipal, requireTenant } from "../../common/request-context";
 import { ZodPipe } from "../../common/zod.pipe";
 import { TenantDb } from "../../infra/tenant-db.service";
 import { AuditService } from "../audit/audit.service";
-import { EntitlementsService } from "../entitlements/entitlements.service";
 import { staffStats, type EmployeeMonthStats } from "./staff-stats";
 
 const monthQuery = z.object({ month: monthStr.optional() });
@@ -64,7 +55,6 @@ export class StaffController {
   constructor(
     private readonly db: TenantDb,
     private readonly audit: AuditService,
-    private readonly entitlements: EntitlementsService,
   ) {}
 
   /** [from, to) of a month in the gym's time zone; defaults to the current month. */
@@ -161,22 +151,6 @@ export class StaffController {
         })
         .filter((x) => x.employee.status === "active" || x.classesTaught > 0 || x.membershipsSold > 0 || x.hoursWorked > 0);
       return { month: r.month, currency: requireTenant().currency, rows };
-    });
-  }
-
-  /** Staff sign-ins at this gym not yet linked to a team member (for the "linked sign-in" picker). */
-  @Get("staff/logins")
-  @RequiresPermission("staff.manage")
-  logins() {
-    return this.db.run(async (tx) => {
-      const [memberships, roles, linked] = await Promise.all([
-        tx.tenantMembership.findMany({ where: { status: "active" }, include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } } }),
-        tx.userRole.findMany({ where: { roleKey: { not: "member" } }, select: { userId: true } }),
-        tx.employee.findMany({ where: { userId: { not: null } }, select: { userId: true } }),
-      ]);
-      const staff = new Set(roles.map((r) => r.userId));
-      const taken = new Set(linked.map((l) => l.userId));
-      return memberships.filter((m) => staff.has(m.userId) && !taken.has(m.userId)).map((m) => m.user);
     });
   }
 
@@ -399,76 +373,6 @@ export class StaffController {
         location: c.location.name,
       })),
     ].sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-  }
-
-  // ── Access (what each person can see and do) ──
-
-  /** Role and per-area access of a team member's sign-in. */
-  @Get("staff/:id/access")
-  @RequiresPermission("tenant.security.manage")
-  async access(@Param("id", ParseUUIDPipe) id: string) {
-    const t = requireTenant();
-    const customAllowed = await this.entitlements.has(t.id, "identity.custom_roles");
-    return this.db.run(async (tx) => {
-      const e = await tx.employee.findFirst({ where: { id }, select: { userId: true } });
-      if (!e) throw new NotFoundException();
-      const roleDefaults = Object.fromEntries(STAFF_ROLE_KEYS.map((r) => [r, accessLevels(permissionsForRoles([r]))]));
-      if (!e.userId) return { userId: null, role: null, areas: null, customised: false, isSelf: false, roleDefaults, customAllowed };
-      const [roles, tweaks] = await Promise.all([
-        tx.userRole.findMany({ where: { userId: e.userId }, select: { roleKey: true } }),
-        tx.userPermissionOverride.findMany({ where: { userId: e.userId }, select: { permission: true, granted: true } }),
-      ]);
-      const keys = roles.map((r) => r.roleKey);
-      const role = STAFF_ROLE_KEYS.find((r) => keys.includes(r)) ?? null;
-      return {
-        userId: e.userId,
-        role,
-        areas: accessLevels(effectivePermissions(keys, tweaks)),
-        customised: tweaks.length > 0,
-        isSelf: e.userId === requirePrincipal().userId,
-        roleDefaults,
-        customAllowed,
-      };
-    });
-  }
-
-  /**
-   * Set someone's role and (Pro) fine-tune each area. Only owners can (tenant.security.manage);
-   * you can't change your own access, and the gym always keeps at least one owner. Audited.
-   */
-  @Put("staff/:id/access")
-  @RequiresPermission("tenant.security.manage")
-  async setAccess(@Param("id", ParseUUIDPipe) id: string, @Body(new ZodPipe(staffAccessSchema)) body: StaffAccessInput) {
-    const t = requireTenant();
-    const tweaks = body.role === "owner" ? [] : overridesFor(body.role, (body.areas ?? {}) as Parameters<typeof overridesFor>[1]);
-    if (tweaks.length && !(await this.entitlements.has(t.id, "identity.custom_roles"))) {
-      throw EntitlementsService.featureDenied("identity.custom_roles");
-    }
-    return this.db.run(async (tx) => {
-      const e = await tx.employee.findFirst({ where: { id }, select: { userId: true } });
-      if (!e) throw new NotFoundException();
-      const userId = e.userId;
-      if (!userId) throw new ConflictException({ code: "NO_LINKED_SIGNIN" });
-      if (userId === requirePrincipal().userId) throw new ForbiddenException({ code: "CANNOT_CHANGE_OWN_ACCESS" });
-      const before = await tx.userRole.findMany({ where: { userId }, select: { roleKey: true } });
-      if (before.some((r) => r.roleKey === "owner") && body.role !== "owner") {
-        const owners = await tx.userRole.count({ where: { roleKey: "owner" } });
-        if (owners <= 1) throw new ConflictException({ code: "LAST_OWNER" });
-      }
-      // Staff roles are replaced; a "member" role (they also train here) is kept.
-      await tx.userRole.deleteMany({ where: { userId, roleKey: { in: [...STAFF_ROLE_KEYS] } } });
-      await tx.userRole.create({ data: { tenantId: t.id, userId, roleKey: body.role } });
-      await tx.userPermissionOverride.deleteMany({ where: { userId } });
-      if (tweaks.length) await tx.userPermissionOverride.createMany({ data: tweaks.map((o) => ({ tenantId: t.id, userId, ...o })) });
-      await this.audit.record(tx, {
-        tenantId: t.id,
-        action: "staff.access_changed",
-        entityType: "employee",
-        entityId: id,
-        data: { from: before.map((r) => r.roleKey), role: body.role, overrides: tweaks.map((o) => ({ permission: o.permission, granted: o.granted })) },
-      });
-      return { role: body.role, areas: accessLevels(effectivePermissions([body.role], tweaks)), customised: tweaks.length > 0 };
-    });
   }
 
   // ── Time clock ──

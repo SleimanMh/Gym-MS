@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Banknote, Percent, Receipt, TrendingUp } from "lucide-react";
 import { minorDigits } from "@gym/shared";
@@ -12,7 +11,6 @@ import { fmtPct, money } from "@/lib/format";
 import { getT } from "@/lib/i18n";
 import { categoryName, financeTabs, monthName } from "@/lib/staff";
 import { niceTicks } from "@/lib/ticks";
-import type { LocationsPnl } from "./locations/page";
 
 export interface FinanceOverview {
   currency: string;
@@ -34,7 +32,7 @@ export default async function FinancePage() {
   if (!me?.permissions.includes("finance.view")) notFound();
   if (!me.entitlements?.features.includes("finance.pnl")) return <LockedFeature feature="finance.pnl" t={t} />;
 
-  const [o, byLoc] = await Promise.all([api<FinanceOverview>("/v1/finance/overview"), api<LocationsPnl>("/v1/finance/locations")]);
+  const o = await api<FinanceOverview>("/v1/finance/overview");
   const k = o.kpis;
   const loc = lang === "ar" ? "ar-LB" : "en-GB";
   const m = (v: string | number) => money(v, o.currency, lang);
@@ -70,7 +68,6 @@ export default async function FinancePage() {
     { key: "other", label: t("fin.stream.other"), v: Number(o.revenueByStream.other) },
   ];
   const streamTotal = streams.reduce((s, x) => s + x.v, 0);
-  const net = Number(k.net.valueMinor);
 
   return (
     <>
@@ -112,22 +109,6 @@ export default async function FinancePage() {
           </Card>
 
           <div className="flex flex-col gap-5">
-            {/* Dark summary card: this month's result in one line */}
-            <section className="rounded-[var(--radius-card)] bg-ink p-6 text-white">
-              <p className="text-sm text-white/60">{t("fin.net")}</p>
-              <p className={cn("mt-1 text-[38px] font-semibold leading-none tabular-nums", net < 0 && "text-[#ff9b9b]")}>{m(k.net.valueMinor)}</p>
-              <dl className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-2xl bg-white/6 px-3 py-2.5">
-                  <dd className="font-semibold tabular-nums">{m(k.revenue.valueMinor)}</dd>
-                  <dt className="text-xs text-white/55">{t("fin.revenue")}</dt>
-                </div>
-                <div className="rounded-2xl bg-white/6 px-3 py-2.5">
-                  <dd className="font-semibold tabular-nums">{m(k.costs.valueMinor)}</dd>
-                  <dt className="text-xs text-white/55">{t("fin.costs")}</dt>
-                </div>
-              </dl>
-            </section>
-
             <Card className="flex-1">
               <SectionTitle>{t("fin.streams")}</SectionTitle>
               {streamTotal > 0 ? (
@@ -155,41 +136,6 @@ export default async function FinancePage() {
             </Card>
           </div>
         </div>
-
-        {byLoc.locations.length > 1 && (
-          <Card>
-            <SectionTitle
-              action={
-                <Link href="/finance/locations" className="text-sm font-medium text-accent hover:underline">
-                  {t("loc.seeAll")}
-                </Link>
-              }
-            >
-              {t("loc.card")}
-            </SectionTitle>
-            <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {byLoc.locations.map((l) => {
-                const n = Number(l.netMinor);
-                return (
-                  <li key={l.id} className="flex items-center gap-3 rounded-2xl bg-sunken px-4 py-3">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold">{l.name}</span>
-                      <span className="block text-xs text-faint">
-                        {m(l.revenueMinor)} − {m(Number(l.expensesMinor) + Number(l.staffMinor))}
-                      </span>
-                    </span>
-                    <span className="text-end">
-                      <span className={cn("block font-semibold tabular-nums", n < 0 && "text-danger")}>{m(l.netMinor)}</span>
-                      <span className={cn("block text-xs", n < 0 ? "text-danger" : "text-success")}>
-                        {n >= 0 ? t("loc.profit") : t("loc.loss")} · {pct(l.marginPct)}
-                      </span>
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </Card>
-        )}
 
         <Card>
           <SectionTitle>{t("fin.byCategory")}</SectionTitle>

@@ -17,10 +17,13 @@ export class IdentityService {
   ) {}
 
   async loadPrincipal(token: Extract<VerifiedToken, { kind: "user" }>, tenantId: string | null): Promise<Principal | null> {
-    let user = await this.prisma.user.findUnique({
-      where: { authSubject: token.subject },
-      include: { platformUser: true },
-    });
+    // Password sign-in tokens carry our user id; Keycloak/dev tokens the identity-provider subject.
+    let user =
+      token.source === "local"
+        ? await this.prisma.user.findUnique({ where: { id: token.subject }, include: { platformUser: true } })
+        : await this.prisma.user.findUnique({ where: { authSubject: token.subject }, include: { platformUser: true } });
+    // A password change or reset ends every earlier session.
+    if (user && token.source === "local" && token.sessionVersion !== user.sessionVersion) return null;
 
     // First Keycloak sign-in: link the Keycloak account to our user by VERIFIED email. Users created
     // by the seed carry a "dev|…" placeholder subject, which a real sign-in replaces (dev tokens keep

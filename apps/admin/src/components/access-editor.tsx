@@ -1,48 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Lock, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-type Level = "none" | "view" | "manage";
-
-export interface AccessEditorProps {
-  employeeId: string;
+export interface AccessFormProps {
   roles: { key: string; label: string; help: string }[];
-  areas: { key: string; label: string; levels: Level[] }[];
-  roleDefaults: Record<string, Record<string, Level>>;
+  /** Areas of the app, each with its permissions; the first one opens the area. */
+  tree: { key: string; label: string; permissions: { key: string; label: string }[] }[];
+  roleDefaults: Record<string, string[]>;
   initialRole: string;
-  initialAreas: Record<string, Level>;
+  initialSelection: string[];
   customAllowed: boolean;
-  labels: { role: string; areas: string; none: string; view: string; manage: string; on: string; save: string; reset: string; custom: string; ownerAll: string; locked: string };
+  labels: { role: string; access: string; accessHelp: string; reset: string; custom: string; ownerAll: string; locked: string; submit: string };
   action: (f: FormData) => Promise<void>;
+  /** Hidden ids and any fields shown above the role (e.g. name and email when creating a user). */
+  children?: ReactNode;
+  disabled?: boolean;
 }
 
 /**
- * Role cards, then one row per area of the app (Hidden / View / Manage). Picking a role loads its
- * defaults; changing a row customises this person only. Without the plan feature the rows show the
- * role's access read-only.
+ * Role cards + an access tree (ADR 0007). Picking a role loads its defaults; ticking changes this
+ * person only. A branch's first item opens the area — ticking any other item ticks it, unticking
+ * it clears the branch. Without the plan feature the tree shows the role's access read-only.
  */
-export function AccessEditor({ employeeId, roles, areas, roleDefaults, initialRole, initialAreas, customAllowed, labels, action }: AccessEditorProps) {
+export function AccessForm({ roles, tree, roleDefaults, initialRole, initialSelection, customAllowed, labels, action, children, disabled }: AccessFormProps) {
   const [role, setRole] = useState(initialRole);
-  const [levels, setLevels] = useState<Record<string, Level>>(initialAreas);
-  const defaults = roleDefaults[role] ?? {};
+  const [sel, setSel] = useState<Set<string>>(new Set(initialSelection));
   const isOwner = role === "owner";
-  const customised = !isOwner && areas.some((a) => levels[a.key] !== defaults[a.key]);
-  const editable = customAllowed && !isOwner;
+  const editable = customAllowed && !isOwner && !disabled;
+  const defaults = new Set(roleDefaults[role] ?? []);
+  const shown = isOwner ? new Set(tree.flatMap((a) => a.permissions.map((p) => p.key))) : sel;
+  const customised = !isOwner && (shown.size !== defaults.size || [...shown].some((p) => !defaults.has(p)));
 
   const pickRole = (r: string) => {
     setRole(r);
-    setLevels({ ...(roleDefaults[r] ?? {}) });
+    setSel(new Set(roleDefaults[r] ?? []));
   };
+  const toggleLeaf = (area: AccessFormProps["tree"][number], key: string, on: boolean) =>
+    setSel((s) => {
+      const n = new Set(s);
+      const first = area.permissions[0]!.key;
+      if (on) {
+        n.add(key);
+        n.add(first);
+      } else if (key === first) {
+        area.permissions.forEach((p) => n.delete(p.key));
+      } else n.delete(key);
+      return n;
+    });
+  const toggleArea = (area: AccessFormProps["tree"][number], on: boolean) =>
+    setSel((s) => {
+      const n = new Set(s);
+      area.permissions.forEach((p) => (on ? n.add(p.key) : n.delete(p.key)));
+      return n;
+    });
 
   return (
-    <form action={action} className="flex flex-col gap-5">
-      <input type="hidden" name="id" value={employeeId} />
+    <form action={action} className="flex flex-col gap-6">
+      {children}
       <input type="hidden" name="role" value={role} />
-      {editable && areas.map((a) => <input key={a.key} type="hidden" name={`area.${a.key}`} value={levels[a.key] ?? "none"} />)}
+      {/* permSet tells the server the tree was sent (even with nothing ticked). */}
+      {editable && <input type="hidden" name="permSet" value="1" />}
+      {editable && [...sel].map((p) => <input key={p} type="hidden" name="perm" value={p} />)}
 
-      <fieldset>
+      <fieldset disabled={disabled}>
         <legend className="mb-2 text-sm font-medium">{labels.role}</legend>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {roles.map((r) => (
@@ -62,64 +84,75 @@ export function AccessEditor({ employeeId, roles, areas, roleDefaults, initialRo
       </fieldset>
 
       <fieldset>
-        <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="mb-1 flex items-center justify-between gap-3">
           <legend className="text-sm font-medium">
-            {labels.areas}
+            {labels.access}
             {customised && <span className="ms-2 rounded-full bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning">{labels.custom}</span>}
           </legend>
           {editable && customised && (
-            <button type="button" onClick={() => setLevels({ ...defaults })} className="flex items-center gap-1 text-xs font-medium text-accent hover:underline">
+            <button type="button" onClick={() => setSel(new Set(defaults))} className="flex items-center gap-1 text-xs font-medium text-accent hover:underline">
               <RotateCcw size={12} aria-hidden />
               {labels.reset}
             </button>
           )}
         </div>
-        {isOwner && <p className="mb-2 text-xs text-muted">{labels.ownerAll}</p>}
+        <p className="mb-3 text-xs text-muted">{isOwner ? labels.ownerAll : labels.accessHelp}</p>
         {!customAllowed && !isOwner && (
-          <p className="mb-2 flex items-center gap-1.5 text-xs text-muted">
+          <p className="mb-3 flex items-center gap-1.5 text-xs text-muted">
             <Lock size={12} aria-hidden />
             {labels.locked}
           </p>
         )}
-        <ul className="divide-y divide-border rounded-2xl bg-sunken px-4">
-          {areas.map((a) => {
-            const current = isOwner ? (a.levels.includes("manage") ? "manage" : "view") : (levels[a.key] ?? "none");
+        <ul className="grid gap-2 md:grid-cols-2">
+          {tree.map((area) => {
+            const on = area.permissions.filter((p) => shown.has(p.key)).length;
+            const all = on === area.permissions.length;
             return (
-              <li key={a.key} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
-                <span className="text-sm font-medium">{a.label}</span>
-                <span className="flex rounded-full bg-surface p-0.5" role="radiogroup" aria-label={a.label}>
-                  {a.levels.map((l) => {
-                    const on = current === l;
-                    const text = l === "none" ? labels.none : l === "manage" ? labels.manage : a.levels.length === 2 ? labels.on : labels.view;
-                    return (
-                      <button
-                        key={l}
-                        type="button"
-                        role="radio"
-                        aria-checked={on}
-                        disabled={!editable}
-                        onClick={() => setLevels((s) => ({ ...s, [a.key]: l }))}
-                        className={cn(
-                          "rounded-full px-3 py-1 text-xs font-semibold transition-subtle disabled:cursor-default",
-                          on ? (l === "none" ? "bg-ink/80 text-white" : "bg-accent text-accent-fg") : "text-muted enabled:hover:text-fg",
-                        )}
-                      >
-                        {text}
-                      </button>
-                    );
-                  })}
-                </span>
+              <li key={area.key} className={cn("rounded-2xl px-4 py-3", on ? "bg-accent-soft/50" : "bg-sunken")}>
+                <label className="flex items-center gap-2.5 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={all}
+                    ref={(el) => {
+                      if (el) el.indeterminate = on > 0 && !all;
+                    }}
+                    disabled={!editable}
+                    onChange={(e) => toggleArea(area, e.target.checked)}
+                    className="size-4 accent-[var(--accent)]"
+                  />
+                  {area.label}
+                </label>
+                {area.permissions.length > 1 && (
+                  <ul className="mt-2 flex flex-col gap-1.5 border-s-2 border-border ps-4 ms-2">
+                    {area.permissions.map((p) => (
+                      <li key={p.key}>
+                        <label className="flex items-center gap-2.5 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={shown.has(p.key)}
+                            disabled={!editable}
+                            onChange={(e) => toggleLeaf(area, p.key, e.target.checked)}
+                            className="size-4 accent-[var(--accent)]"
+                          />
+                          {p.label}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </li>
             );
           })}
         </ul>
       </fieldset>
 
-      <div>
-        <button type="submit" className="h-10 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg hover:opacity-90">
-          {labels.save}
-        </button>
-      </div>
+      {!disabled && (
+        <div>
+          <button type="submit" className="h-10 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg hover:opacity-90">
+            {labels.submit}
+          </button>
+        </div>
+      )}
     </form>
   );
 }

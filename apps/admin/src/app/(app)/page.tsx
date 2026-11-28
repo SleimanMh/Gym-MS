@@ -1,17 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AlertTriangle, Banknote, ChevronRight, ScanLine, Users, Wallet } from "lucide-react";
-import { minorDigits } from "@gym/shared";
 import { AttendanceChart } from "@/components/attendance-chart";
-import { MixDonut } from "@/components/mix-donut";
-import { RevenueChart } from "@/components/revenue-chart";
-import { FillGauge, NextClassHero, StatCard } from "@/components/studio";
+import { NextClassHero, StatCard } from "@/components/studio";
 import { Avatar, Card, SectionTitle } from "@/components/ui";
 import { api, getMe } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { fmtDateOnly, fmtDay, fmtTime, minutesInDay, money } from "@/lib/format";
 import { getT } from "@/lib/i18n";
-import { niceTicks } from "@/lib/ticks";
 
 interface Overview {
   currency: string;
@@ -24,7 +20,6 @@ interface Overview {
     checkinsToday: { value: number };
     overduePayments: { value: number; amountMinor: string };
   };
-  revenueTrend: { month: string; revenueMinor: string }[];
   todaysClasses: {
     id: string;
     startsAt: string;
@@ -51,9 +46,6 @@ interface Overview {
     attendees: { firstName: string; lastName: string }[];
   } | null;
   weekAttendance: { day: string; checkins: number; isToday: boolean; isFuture: boolean }[];
-  monthFill: { pct: number | null; classes: number; checkins: number; noShows: number };
-  membershipMix: { name: string; count: number }[];
-  topMembers: { id: string; firstName: string; lastName: string; visits: number }[];
 }
 
 /** Owner overview in the "studio" layout: what's next, how full we are, who's coming, what we earn. */
@@ -74,18 +66,6 @@ export default async function DashboardPage() {
   const hour = Math.floor(minutesInDay(new Date(), tz) / 60);
   const greet = hour < 12 ? "hi.morning" : hour < 18 ? "hi.afternoon" : "hi.evening";
   const todayLong = new Intl.DateTimeFormat(loc, { timeZone: tz, weekday: "long", day: "numeric", month: "long" }).format(new Date());
-
-  // Revenue chart data
-  const unit = 10 ** minorDigits(o.currency);
-  const monthFmt = new Intl.DateTimeFormat(loc, { month: "short", timeZone: "UTC" });
-  const points = o.revenueTrend.map((p) => ({
-    key: p.month,
-    label: monthFmt.format(new Date(`${p.month}-15T00:00:00Z`)),
-    value: Number(p.revenueMinor) / unit,
-    display: m(p.revenueMinor),
-  }));
-  const compact = new Intl.NumberFormat(loc, { notation: "compact", maximumFractionDigits: 1 });
-  const ticks = niceTicks(Math.max(1, ...points.map((p) => p.value)));
 
   // Next class
   const nc = o.nextClass;
@@ -177,45 +157,17 @@ export default async function DashboardPage() {
             />
           </div>
 
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-            <Card>
-              <SectionTitle action={<span className="text-sm text-muted">{t("dash.weekTotal", { n: nf.format(weekTotal) })}</span>}>
-                {t("dash.weekly")}
-              </SectionTitle>
-              <p className="-mt-2 mb-6 text-xs text-faint">{t("dash.weeklyHelp")}</p>
-              <AttendanceChart days={weekDays} caption={t("dash.weeklyHelp")} />
-            </Card>
-            <Card>
-              <SectionTitle>{t("dash.mix")}</SectionTitle>
-              <MixDonut items={o.membershipMix} totalLabel={t("dash.activeShort")} otherLabel={t("dash.other")} lang={lang} />
-            </Card>
-          </div>
-
           <Card>
-            <SectionTitle>{t("dash.revenueTrend")}</SectionTitle>
-            <RevenueChart
-              points={points}
-              tableLabel={t("dash.showTable")}
-              monthLabel={t("dash.month")}
-              valueLabel={t("dash.revenue")}
-              formatTick={Object.fromEntries(ticks.map((v) => [String(v), compact.format(v)]))}
-            />
+            <SectionTitle action={<span className="text-sm text-muted">{t("dash.weekTotal", { n: nf.format(weekTotal) })}</span>}>
+              {t("dash.weekly")}
+            </SectionTitle>
+            <p className="-mt-2 mb-6 text-xs text-faint">{t("dash.weeklyHelp")}</p>
+            <AttendanceChart days={weekDays} caption={t("dash.weeklyHelp")} />
           </Card>
         </div>
 
         {/* Side column */}
         <div className="flex min-w-0 flex-col gap-5">
-          <FillGauge
-            title={t("dash.monthFill")}
-            pct={o.monthFill.pct}
-            caption={t("dash.spotsTaken")}
-            stats={[
-              { label: t("dash.classes"), value: nf.format(o.monthFill.classes) },
-              { label: t("dash.checkins"), value: nf.format(o.monthFill.checkins) },
-              { label: t("dash.noShows"), value: nf.format(o.monthFill.noShows) },
-            ]}
-          />
-
           <Card>
             <SectionTitle
               action={
@@ -250,24 +202,6 @@ export default async function DashboardPage() {
             ) : (
               <p className="text-sm text-muted">{t("dash.noClassesToday")}</p>
             )}
-          </Card>
-
-          <Card>
-            <SectionTitle action={<span className="text-xs text-faint">{t("dash.last30")}</span>}>{t("dash.top")}</SectionTitle>
-            <ol className="flex flex-col gap-1">
-              {o.topMembers.map((tm, i) => (
-                <li key={tm.id}>
-                  <Link href={`/members/${tm.id}`} className="transition-subtle flex items-center gap-3 rounded-xl px-1 py-1.5 hover:bg-sunken">
-                    <span className="w-5 text-xs font-semibold text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
-                    <Avatar first={tm.firstName} last={tm.lastName} size="sm" />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      {tm.firstName} {tm.lastName}
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums">{nf.format(tm.visits)}</span>
-                  </Link>
-                </li>
-              ))}
-            </ol>
           </Card>
 
           <Card>

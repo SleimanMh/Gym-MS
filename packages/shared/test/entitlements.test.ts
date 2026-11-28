@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { computeEntitlements, withinLimit, lowestPlanWith, PLAN_CATALOGUE } from "../src/entitlements";
-import { accessLevels, effectivePermissions, overridesFor, permissionsForRoles } from "../src/permissions";
+import { effectivePermissions, normaliseSelection, overridesFor, permissionsForRoles, treeSelection } from "../src/permissions";
 
 const plan = (code: keyof typeof PLAN_CATALOGUE) => [
   ...PLAN_CATALOGUE[code].features.map((featureKey) => ({ featureKey, enabled: true, limitValue: null })),
@@ -71,14 +71,14 @@ test("access: overrides add and remove on top of the role; owners are never redu
   assert.deepEqual(effectivePermissions(["owner"], [{ permission: "finance.view", granted: false }]), permissionsForRoles(["owner"]));
 });
 
-test("access: overridesFor stores only what differs from the role, and round-trips to the chosen levels", () => {
-  assert.deepEqual(overridesFor("front_desk", accessLevels(permissionsForRoles(["front_desk"]))), []);
-  const o = overridesFor("front_desk", { members: "view", finance: "view", dashboard: "view" });
-  const levels = accessLevels(effectivePermissions(["front_desk"], o));
-  assert.equal(accessLevels(permissionsForRoles(["front_desk"])).members, "manage");
-  assert.equal(levels.members, "view");
-  assert.ok(!effectivePermissions(["front_desk"], o).includes("member.manage"));
-  assert.equal(levels.finance, "view");
-  assert.equal(levels.dashboard, "view");
-  assert.equal(levels.checkin, "view");
+test("access tree: only differences from the role are stored, and branches need their first leaf", () => {
+  const fd = permissionsForRoles(["front_desk"]);
+  assert.deepEqual(overridesFor("front_desk", treeSelection(fd)), []);
+  // Ticking "edit members" alone also opens Members; ticking finance.manage opens Finance.
+  assert.deepEqual(normaliseSelection(["finance.manage"]), ["finance.view", "finance.manage"]);
+  const o = overridesFor("front_desk", [...treeSelection(fd).filter((p) => p !== "sale.create" && p !== "payment.take"), "report.view"]);
+  const eff = effectivePermissions(["front_desk"], o);
+  assert.ok(eff.includes("report.view"));
+  assert.ok(!eff.includes("sale.create"));
+  assert.ok(eff.includes("checkin.create"));
 });

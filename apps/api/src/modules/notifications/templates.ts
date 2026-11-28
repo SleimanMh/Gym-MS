@@ -10,7 +10,9 @@ export type EmailKind =
   | "waitlist.promoted"
   | "session.cancelled"
   | "membership.expiring"
-  | "member.login_code";
+  | "member.login_code"
+  | "user.invite"
+  | "user.password_reset";
 
 export interface EmailContext {
   lang: "en" | "ar";
@@ -29,6 +31,10 @@ export interface EmailContext {
   planName?: string;
   endsOn?: string;
   daysLeft?: number;
+  /** Staff account emails. */
+  email?: string;
+  tempPassword?: string;
+  expiresDays?: number;
 }
 
 type Copy = { subject: string; lines: string[]; cta?: string };
@@ -80,6 +86,24 @@ const en = (c: EmailContext): Record<EmailKind, Copy> => ({
     subject: `${c.code} is your ${c.gymName} sign-in code`,
     lines: [`Your sign-in code is <strong style="font-size:24px;letter-spacing:4px">${c.code}</strong>`, `It expires in ${c.ttlMin} minutes. If you didn't ask for it, ignore this email.`],
   },
+  "user.invite": {
+    subject: `Your ${c.gymName} staff account`,
+    lines: [
+      `An account was created for you at ${c.gymName}.`,
+      `Email: <strong>${c.email}</strong><br>Temporary password: <strong style="font-family:monospace;font-size:18px">${c.tempPassword}</strong>`,
+      `Sign in with it within ${c.expiresDays} days — you'll be asked to choose your own password.`,
+    ],
+    cta: "Sign in",
+  },
+  "user.password_reset": {
+    subject: `Your new ${c.gymName} password`,
+    lines: [
+      `Your password at ${c.gymName} was reset.`,
+      `Temporary password: <strong style="font-family:monospace;font-size:18px">${c.tempPassword}</strong>`,
+      `Sign in with it within ${c.expiresDays} days and choose a new one. If you didn't expect this, tell the gym owner.`,
+    ],
+    cta: "Sign in",
+  },
 });
 
 const ar = (c: EmailContext): Record<EmailKind, Copy> => ({
@@ -129,6 +153,24 @@ const ar = (c: EmailContext): Record<EmailKind, Copy> => ({
     subject: `${c.code} هو رمز الدخول إلى ${c.gymName}`,
     lines: [`رمز الدخول الخاص بك هو <strong style="font-size:24px;letter-spacing:4px">${c.code}</strong>`, `ينتهي خلال ${c.ttlMin} دقائق. إذا لم تطلبه، تجاهل هذه الرسالة.`],
   },
+  "user.invite": {
+    subject: `حسابك كموظف في ${c.gymName}`,
+    lines: [
+      `تم إنشاء حساب لك في ${c.gymName}.`,
+      `البريد الإلكتروني: <strong dir="ltr">${c.email}</strong><br>كلمة المرور المؤقتة: <strong dir="ltr" style="font-family:monospace;font-size:18px">${c.tempPassword}</strong>`,
+      `سجّل الدخول بها خلال ${c.expiresDays} أيام — سيُطلب منك اختيار كلمة مرور خاصة بك.`,
+    ],
+    cta: "تسجيل الدخول",
+  },
+  "user.password_reset": {
+    subject: `كلمة مرورك الجديدة في ${c.gymName}`,
+    lines: [
+      `تمت إعادة تعيين كلمة مرورك في ${c.gymName}.`,
+      `كلمة المرور المؤقتة: <strong dir="ltr" style="font-family:monospace;font-size:18px">${c.tempPassword}</strong>`,
+      `سجّل الدخول بها خلال ${c.expiresDays} أيام واختر كلمة جديدة. إذا لم تتوقع ذلك، أخبر مالك النادي.`,
+    ],
+    cta: "تسجيل الدخول",
+  },
 });
 
 const escape = (s: string) => s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]!);
@@ -143,6 +185,8 @@ export function renderEmail(kind: EmailKind, raw: EmailContext): { subject: stri
     location: raw.location && escape(raw.location),
     reason: raw.reason && escape(raw.reason),
     planName: raw.planName && escape(raw.planName),
+    email: raw.email && escape(raw.email),
+    tempPassword: raw.tempPassword && escape(raw.tempPassword),
   };
   const copy = (c.lang === "ar" ? ar : en)(c)[kind];
   const dir = c.lang === "ar" ? "rtl" : "ltr";

@@ -72,3 +72,12 @@ test("splitMinor spreads a negative amount (gym-wide income) exactly", () => {
   const r = splitMinor(-1_001n, { a: 2, b: 1 });
   assert.equal(r.a! + r.b!, -1_001n);
 });
+
+import { changePasswordSchema, newPasswordSchema } from "../src/schemas";
+
+test("passwords people choose need 10+ characters, a letter and a digit, and must change", () => {
+  assert.equal(newPasswordSchema.safeParse("short1").success, false);
+  assert.equal(newPasswordSchema.safeParse("onlyletterslong").success, false);
+  assert.equal(newPasswordSchema.safeParse("Gym-member-2026").success, true);
+  assert.equal(changePasswordSchema.safeParse({ email: "a@b.co", currentPassword: "Same-pass-123", newPassword: "Same-pass-123" }).success, false);
+});

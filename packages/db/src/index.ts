@@ -74,3 +74,4 @@ export function generateApiKey(type: "publishable" | "secret"): { key: string; p
 }
 export * from "./demo";
 export * from "./sessions";
+export * from "./password";

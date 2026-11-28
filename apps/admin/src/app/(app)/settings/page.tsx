@@ -4,6 +4,7 @@ import { createLocation } from "@/app/actions";
 import { Badge, Button, Card, Input, Label, Notice, PageHeader, Tabs } from "@/components/ui";
 import { api, getMe } from "@/lib/api";
 import { getT } from "@/lib/i18n";
+import { settingsTabs } from "@/lib/access";
 import { GymSettings } from "./gym-settings";
 
 interface EntitlementsView {
@@ -30,7 +31,7 @@ export default async function SettingsPage({
   return (
     <>
       <PageHeader title={t("settings.title")} />
-      <Tabs items={TABS.map((x) => ({ href: `/settings?tab=${x}`, label: t(`set.tab.${x}`), active: x === tab }))} />
+      <Tabs items={settingsTabs(t, tab, me.permissions.includes("tenant.security.manage"))} />
       {error && <Notice>{err(error)}</Notice>}
       {tab !== "general" ? (
         <GymSettings t={t} lang={lang} currency={me.tenant?.currency ?? "USD"} newKey={newKey} tab={tab} />

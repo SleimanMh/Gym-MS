@@ -765,8 +765,10 @@ Updated by Claude Code as work lands. Exit gates must pass before the next phase
 - [x] Tenant resolution middleware (token → API key → domain, mismatch rejected)
 - [x] Cross-tenant isolation tests (database and HTTP level)
 - [x] Keycloak realm export (Organizations, audience + organization mappers); API verifies Keycloak JWTs
-- [ ] Admin app login through Keycloak (Authorization Code + PKCE) — dev sign-in in place meanwhile
-- [ ] Keycloak Organization created automatically with each tenant (Admin API)
+- [x] Staff sign-in with email + password at each gym's own address (`ironfit.<domain>`); generated password emailed, changed at first sign-in; lockout, reset, disable (ADR 0007)
+- [x] Owner's Users & access console: create staff users, role + access tree per person, audited (ADR 0006, 0007)
+- [ ] Self-service "forgot password" email link (today the owner sends a new password)
+- [ ] Single sign-on through Keycloak for Pro/Enterprise gyms (the API still accepts Keycloak tokens)
 - [x] Roles and permissions (defaults per section 5), deny-by-default access guard
 - [x] Entitlements: features, plans, overrides, `@RequiresFeature` guard, limit checks, UI upgrade cards
 - [x] Admin shell: sidebar, top bar, theme tokens, EN/AR with RTL, design-system page
@@ -789,6 +791,7 @@ Updated by Claude Code as work lands. Exit gates must pass before the next phase
 - [ ] Rooms: table exists and classes can carry a room, but there is no screen or API to create rooms or pick one
 - [x] Auto-renew members get the "ending soon" emails too (actual automatic renewal comes with online payments in Phase 2)
 - [x] Members see their own check-in QR code and current membership in the widget's "My bookings"
+- [x] Members sign in at their gym's address with an emailed code: QR code, membership, bookings, book a class (`/me`)
 - [ ] Late-cancel and no-show fees (credit loss works; charging a fee needs Phase 2 payments)
 - [ ] Calendar views by trainer and by room; drag-to-reschedule; trainer availability / PT appointments; resource booking
 - [ ] Digital waivers and e-signature; family memberships; at-risk member flag

@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { API_URL, TOKEN_COOKIE } from "@/lib/api";
+import { API_URL, TOKEN_COOKIE, currentGym } from "@/lib/api";
 
 /** Streams the payroll CSV from the API with the signed-in user's token (the API checks finance.view). */
 export async function GET(req: Request) {
@@ -7,7 +7,7 @@ export async function GET(req: Request) {
   const q = /^\d{4}-(0[1-9]|1[0-2])$/.test(month) ? `?month=${month}` : "";
   const jar = await cookies();
   const token = jar.get(TOKEN_COOKIE)?.value;
-  const tenant = jar.get("gym_tenant")?.value;
+  const tenant = await currentGym();
   const res = await fetch(`${API_URL}/v1/payroll/export${q}`, {
     cache: "no-store",
     headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(tenant ? { "x-tenant-slug": tenant } : {}) },

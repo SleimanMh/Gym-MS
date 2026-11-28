@@ -17,14 +17,8 @@ const envSchema = z
     APP_ROOT_DOMAIN: z.string().default("localhost"),
     KEYCLOAK_ISSUER: z.string().url().default("http://localhost:8080/realms/gym"),
     KEYCLOAK_AUDIENCE: z.string().default("gym-api"),
-    /**
-     * Keycloak as the API/worker reach it (in Docker: http://keycloak:8080). Defaults to the issuer's
-     * origin. Used for user provisioning; token checks always use KEYCLOAK_ISSUER.
-     */
-    KEYCLOAK_INTERNAL_URL: z.string().url().optional(),
-    /** Service-account client that creates staff accounts and sends set-password emails. Unset secret = invites skipped. */
-    KEYCLOAK_ADMIN_CLIENT_ID: z.string().default("gym-api-admin"),
-    KEYCLOAK_ADMIN_CLIENT_SECRET: z.string().min(8).optional(),
+    /** Signs staff sign-in tokens issued after email + password sign-in (ADR 0007). */
+    AUTH_JWT_SECRET: z.string().min(32),
     AUTH_DEV_TOKENS: bool.default("false"),
     DEV_JWT_SECRET: z.string().min(32).optional(),
     /** Signs member sessions after an email-code login. */
@@ -35,6 +29,8 @@ const envSchema = z
     MAIL_FROM: z.string().default("Gym Manager <no-reply@gym.local>"),
     /** Public origin of the admin app / hosted booking pages (links in emails). */
     PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
+    /** Each gym's own address: {slug} is replaced (ADR 0007). Locally *.localhost resolves to this machine. */
+    GYM_URL_TEMPLATE: z.string().default("http://{slug}.localhost:3000"),
   })
   .superRefine((env, ctx) => {
     if (env.AUTH_DEV_TOKENS && env.NODE_ENV === "production") {

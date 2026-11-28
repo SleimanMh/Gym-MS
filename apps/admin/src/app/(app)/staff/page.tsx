@@ -3,13 +3,13 @@ import { notFound } from "next/navigation";
 import { Banknote, Clock3, Dumbbell, Plus, Users } from "lucide-react";
 import { EmptyState, LockedFeature } from "@/components/blocks";
 import { StatCard } from "@/components/studio";
-import { Avatar, Badge, Button, Card, Notice, PageHeader, SectionTitle, Tabs } from "@/components/ui";
+import { Avatar, Badge, Button, Notice, PageHeader, Tabs } from "@/components/ui";
 import { api, getMe } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { fmtTime, money } from "@/lib/format";
 import { getT } from "@/lib/i18n";
 import { monthName, rateText, staffTabs, type Employee } from "@/lib/staff";
-import { clockIn, clockOut } from "./actions";
+import { clockOut } from "./actions";
 
 /** The team: who's on shift now and what everyone did this month (hours, classes, sales, pay). */
 export default async function StaffPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -157,30 +157,6 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
               )}
             </section>
 
-            {canManage && (
-              <Card>
-                <SectionTitle>{t("clock.in")}</SectionTitle>
-                <ul className="flex flex-col gap-1">
-                  {active
-                    .filter((e) => !e.clockedInSince)
-                    .map((e) => (
-                      <li key={e.id} className="flex items-center gap-3 rounded-xl px-1 py-1.5">
-                        <Avatar first={e.firstName} last={e.lastName} size="sm" />
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                          {e.firstName} {e.lastName}
-                        </span>
-                        <form action={clockIn}>
-                          <input type="hidden" name="employeeId" value={e.id} />
-                          <input type="hidden" name="back" value="/staff" />
-                          <Button variant="secondary" className="h-8 px-3 text-xs">
-                            {t("clock.in")}
-                          </Button>
-                        </form>
-                      </li>
-                    ))}
-                </ul>
-              </Card>
-            )}
           </div>
         </div>
       )}

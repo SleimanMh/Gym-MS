@@ -12,9 +12,12 @@ export interface Mailer {
 
 export interface JobConfig {
   publicAppUrl: string;
-  /** Staff account provisioning (Keycloak). Null = `user.invite` events are recorded as skipped. */
-  identity?: { invite(target: { email: string; firstName: string; lastName: string }): Promise<unknown> } | null;
+  /** Each gym's own address, e.g. http://{slug}.localhost:3000 (ADR 0007). */
+  gymUrlTemplate?: string;
 }
+
+/** Emails that carry a secret (code or generated password): scrubbed from the outbox once sent. */
+const SECRET_KINDS = new Set<string>(["member.login_code", "user.invite", "user.password_reset"]);
 
 const EMAIL_KINDS = new Set<EmailKind>([
   "booking.created",
@@ -24,6 +27,8 @@ const EMAIL_KINDS = new Set<EmailKind>([
   "session.cancelled",
   "membership.expiring",
   "member.login_code",
+  "user.invite",
+  "user.password_reset",
 ]);
 
 /** Delivers pending outbox events. Returns how many were processed. */
@@ -41,16 +46,11 @@ export async function dispatchOutbox(prisma: PrismaClient, mailer: Mailer, cfg: 
       });
 
       // 2. …do the slow external call outside it, so SMTP or Keycloak can't hold a transaction open…
-      let note: string | null = null;
+      const note: string | null = null;
       if (msg) await mailer.send(msg);
-      if (event.type === "user.invite") {
-        const p = event.payload as { email: string; firstName: string; lastName: string };
-        if (cfg.identity) await cfg.identity.invite({ email: p.email, firstName: p.firstName, lastName: p.lastName });
-        else note = "skipped: Keycloak provisioning is not configured (KEYCLOAK_ADMIN_CLIENT_SECRET)";
-      }
 
-      // 3. …then mark it done. One-time codes must not linger in the database once delivered.
-      const payload = event.type === "member.login_code" ? { delivered: true } : (event.payload ?? {});
+      // 3. …then mark it done. Codes and generated passwords must not linger once delivered.
+      const payload = SECRET_KINDS.has(event.type) ? { delivered: true } : (event.payload ?? {});
       await withTenant(prisma, tenant_id, (tx) =>
         tx.outboxEvent.update({
           where: { id },
@@ -90,6 +90,24 @@ async function buildEmail(
 
   let ctx: EmailContext;
   let to: string | null;
+
+  if (kind === "user.invite" || kind === "user.password_reset") {
+    // Staff account emails: the generated password and this gym's own sign-in address.
+    const p = payload as { email: string; firstName: string; tempPassword: string; expiresDays: number };
+    const gymUrl = (cfg.gymUrlTemplate ?? `${cfg.publicAppUrl}`).replace("{slug}", tenant.slug);
+    return {
+      to: p.email,
+      ...renderEmail(kind, {
+        ...base,
+        lang: tenant.defaultLanguage as "en" | "ar",
+        firstName: p.firstName,
+        email: p.email,
+        tempPassword: p.tempPassword,
+        expiresDays: p.expiresDays,
+        bookingUrl: `${gymUrl}/login`,
+      }),
+    };
+  }
 
   if (kind === "member.login_code" || kind === "membership.expiring") {
     let member;

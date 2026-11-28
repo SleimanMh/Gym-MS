@@ -12,7 +12,6 @@ import { Queue, Worker } from "bullmq";
 import nodemailer from "nodemailer";
 import { createPrismaClient } from "@gym/db";
 import { loadEnv } from "./config/env";
-import { KeycloakAdmin } from "./modules/identity/keycloak-admin";
 import { dispatchOutbox, runMaintenance, type Mailer } from "./modules/notifications/jobs";
 
 const QUEUE = "default";
@@ -30,17 +29,7 @@ async function main() {
       await transport.sendMail({ from: env.MAIL_FROM, ...msg });
     },
   };
-  const identity = env.KEYCLOAK_ADMIN_CLIENT_SECRET
-    ? KeycloakAdmin.fromIssuer({
-        issuer: env.KEYCLOAK_ISSUER,
-        internalUrl: env.KEYCLOAK_INTERNAL_URL,
-        clientId: env.KEYCLOAK_ADMIN_CLIENT_ID,
-        clientSecret: env.KEYCLOAK_ADMIN_CLIENT_SECRET,
-        appUrl: env.PUBLIC_APP_URL,
-      })
-    : null;
-  if (!identity) console.warn("KEYCLOAK_ADMIN_CLIENT_SECRET not set: staff invitations will be skipped");
-  const cfg = { publicAppUrl: env.PUBLIC_APP_URL, identity };
+  const cfg = { publicAppUrl: env.PUBLIC_APP_URL, gymUrlTemplate: env.GYM_URL_TEMPLATE };
 
   const queue = new Queue(QUEUE, { connection });
   await queue.upsertJobScheduler("outbox.dispatch", { every: 5_000 }, { name: "outbox.dispatch" });
