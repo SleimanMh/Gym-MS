@@ -168,6 +168,43 @@ d("Staff accounts and password sign-in (HTTP)", () => {
     expect(locked.body.code).toBe("ACCOUNT_LOCKED");
   });
 
+  it("lets the owner set a password themselves (no email), with or without a forced change", async () => {
+    const email = `set.${run}@test.dev`;
+    const created = await as(ownerToken, "post", "/v1/users", { firstName: "Sam", lastName: "Set", email, role: "trainer", password: "Sam-start-2026", mustChangePassword: false });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ invited: false, passwordSet: true });
+    const emails = await withTenant(prisma, tenantId, (tx) => tx.outboxEvent.count({ where: { type: "user.invite", payload: { path: ["email"], equals: email } } }));
+    expect(emails).toBe(0); // the owner hands it over
+
+    const first = await login(email, "Sam-start-2026", slug);
+    expect(first.body.status).toBe("ok");
+    expect((await as(ownerToken, "get", "/v1/users")).body.find((u: { email: string }) => u.email === email).status).toBe("active");
+
+    // Set it again, this time forcing a change: their session ends and the next sign-in asks for a new one.
+    const id = created.body.userId as string;
+    expect((await as(ownerToken, "put", `/v1/users/${id}/password`, { password: "short" })).status).toBe(400);
+    expect((await as(ownerToken, "put", `/v1/users/${id}/password`, { password: "Sam-again-2026", mustChangePassword: true })).status).toBe(200);
+    expect((await as(first.body.accessToken, "get", "/v1/me")).status).toBe(401);
+    expect((await login(email, "Sam-again-2026", slug)).body).toEqual({ status: "password_change_required" });
+    const audit = await withTenant(prisma, tenantId, (tx) => tx.auditLog.findFirst({ where: { action: "user.password_set", entityId: id } }));
+    expect(audit).not.toBeNull();
+  });
+
+  it("won't let an owner set the password of someone who also works at another gym", async () => {
+    const email = `shared.${run}@test.dev`;
+    const here = await as(ownerToken, "post", "/v1/users", { firstName: "Sha", lastName: "Red", email, role: "trainer", password: "Shared-pass-2026", mustChangePassword: false });
+    // IronFit adds the same person: one account, two gyms.
+    const ironfitOwner = (await login("owner@ironfit.test", "Gym-demo-2026", "ironfit")).body.accessToken as string;
+    const there = await http().post("/v1/users").set("authorization", `Bearer ${ironfitOwner}`).set("x-tenant-slug", "ironfit").send({ firstName: "Sha", lastName: "Red", email, role: "trainer" });
+    expect(there.status).toBe(201);
+    expect(there.body.invited).toBe(false); // they already have a password
+    const r = await as(ownerToken, "put", `/v1/users/${here.body.userId}/password`, { password: "Taken-over-2026" });
+    expect(r.status).toBe(409);
+    expect(r.body.code).toBe("SHARED_ACCOUNT");
+    // A password in the create call is ignored for an existing account (they keep their own).
+    expect((await login(email, "Shared-pass-2026", "ironfit")).body.status).toBe("ok");
+  });
+
   it("keeps each gym's users to itself", async () => {
     // IronFit's owner can't see or touch this gym's users: another gym's person is a 404.
     const ironfitOwner = (await login("owner@ironfit.test", "Gym-demo-2026", "ironfit")).body.accessToken as string;

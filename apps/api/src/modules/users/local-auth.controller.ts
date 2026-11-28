@@ -61,12 +61,6 @@ export class LocalAuthController {
         sessionVersion: { increment: 1 },
       },
     });
-    if (tenant) {
-      // Invited → active on their first own password.
-      await this.tenantDb.runFor(tenant.id, (tx) =>
-        tx.tenantMembership.updateMany({ where: { userId: user.id, status: "invited" }, data: { status: "active" } }),
-      );
-    }
     return { status: "ok" as const, ...(await this.issue(updated, tenant)) };
   }
 
@@ -115,6 +109,12 @@ export class LocalAuthController {
 
   private async issue(user: User, tenant: ContextTenant | null) {
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    if (tenant) {
+      // Invited → active once they're actually in (owner-set password without a forced change).
+      await this.tenantDb.runFor(tenant.id, (tx) =>
+        tx.tenantMembership.updateMany({ where: { userId: user.id, status: "invited" }, data: { status: "active" } }),
+      );
+    }
     const { token, expiresIn } = await this.auth.mintSessionToken({
       userId: user.id,
       email: user.email,

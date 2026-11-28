@@ -334,6 +334,17 @@ export const en3 = {
   "me.booked": "Booked",
   "me.spots": "{n} spots left",
   "me.signOut": "Sign out",
+  "users.setPw": "Set password",
+  "users.setPwHelp": "Choose a password and give it to them yourself. No email is sent.",
+  "users.newPw": "New password",
+  "users.confirmPw": "Confirm password",
+  "users.forceChange": "Ask them to choose their own at next sign-in",
+  "users.setPwDone": "Password saved. Give it to them yourself; no email was sent.",
+  "users.pwHow": "How they get their password",
+  "users.pwEmail": "Email them a temporary password",
+  "users.pwSet": "I'll set it now and tell them",
+  "users.createdSet": "Account created with the password you chose. No email was sent.",
+  "users.pwRule": "At least 10 characters, with a letter and a number.",
 } as const;
 
 export type Phase3Key = keyof typeof en3;
@@ -660,6 +671,17 @@ export const ar3: Record<Phase3Key, string> = {
   "me.booked": "محجوزة",
   "me.spots": "متبقٍّ {n} مقاعد",
   "me.signOut": "تسجيل الخروج",
+  "users.setPw": "تعيين كلمة المرور",
+  "users.setPwHelp": "اختر كلمة مرور وأعطها له بنفسك. لن يُرسل أي بريد.",
+  "users.newPw": "كلمة المرور الجديدة",
+  "users.confirmPw": "تأكيد كلمة المرور",
+  "users.forceChange": "اطلب منه اختيار كلمة خاصة به عند الدخول التالي",
+  "users.setPwDone": "تم حفظ كلمة المرور. أعطها له بنفسك؛ لم يُرسل أي بريد.",
+  "users.pwHow": "كيف يحصل على كلمة المرور",
+  "users.pwEmail": "إرسال كلمة مرور مؤقتة بالبريد",
+  "users.pwSet": "سأعيّنها الآن وأبلغه بها",
+  "users.createdSet": "تم إنشاء الحساب بكلمة المرور التي اخترتها. لم يُرسل أي بريد.",
+  "users.pwRule": "10 أحرف على الأقل، تتضمن حرفاً ورقماً.",
 };
 
 export const errors3En: Record<string, string> = {
@@ -682,6 +704,7 @@ export const errors3En: Record<string, string> = {
   GYM_NOT_FOUND: "There's no gym with that address.",
   USER_EXISTS: "That person already has access to this gym.",
   INVALID_CODE: "That code is wrong or has expired.",
+  SHARED_ACCOUNT: "An owner can only set the password of someone who works at this gym alone. Use “Email a new password” instead.",
 };
 
 export const errors3Ar: Record<string, string> = {
@@ -704,4 +727,5 @@ export const errors3Ar: Record<string, string> = {
   GYM_NOT_FOUND: "لا يوجد نادٍ بهذا العنوان.",
   USER_EXISTS: "لدى هذا الشخص وصول إلى هذا النادي مسبقاً.",
   INVALID_CODE: "الرمز غير صحيح أو منتهي الصلاحية.",
+  SHARED_ACCOUNT: "يمكن للمالك تعيين كلمة مرور لمن يعمل في هذا النادي فقط. استخدم «إرسال كلمة مرور جديدة» بدلاً من ذلك.",
 };

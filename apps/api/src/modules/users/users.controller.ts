@@ -3,6 +3,7 @@ import type { TenantTx } from "@gym/db";
 import {
   ACCESS_TREE,
   createUserSchema,
+  setPasswordSchema,
   effectivePermissions,
   overridesFor,
   permissionsForRoles,
@@ -11,6 +12,7 @@ import {
   userAccessSchema,
   userStatusSchema,
   type CreateUserInput,
+  type SetPasswordInput,
   type StaffRoleKey,
   type UserAccessInput,
 } from "@gym/shared";
@@ -21,7 +23,7 @@ import { TenantDb } from "../../infra/tenant-db.service";
 import { AuditService } from "../audit/audit.service";
 import { EntitlementsService } from "../entitlements/entitlements.service";
 import { OutboxService } from "../notifications/outbox.service";
-import { provisionAccount, setTemporaryPassword, TEMP_PASSWORD_DAYS } from "./accounts";
+import { assertOnlyThisGym, provisionAccount, setChosenPassword, setTemporaryPassword, TEMP_PASSWORD_DAYS } from "./accounts";
 
 const isStaffRole = (r: string): r is StaffRoleKey => (STAFF_ROLE_KEYS as readonly string[]).includes(r);
 
@@ -76,7 +78,13 @@ export class UsersController {
     await this.assertCustomAllowed(overrides.length);
     return this.db.run(async (tx) => {
       const r = await provisionAccount(tx, this.outbox, t.id, { ...body, overrides });
-      await this.audit.record(tx, { tenantId: t.id, action: "user.created", entityType: "user", entityId: r.userId, data: { role: body.role, invited: r.invited } });
+      await this.audit.record(tx, {
+        tenantId: t.id,
+        action: "user.created",
+        entityType: "user",
+        entityId: r.userId,
+        data: { role: body.role, invited: r.invited, passwordSetByOwner: r.passwordSet },
+      });
       return r;
     });
   }
@@ -162,6 +170,24 @@ export class UsersController {
       );
       await this.audit.record(tx, { tenantId: t.id, action: "user.password_reset", entityType: "user", entityId: id });
       return { ok: true };
+    });
+  }
+
+  /**
+   * Owner sets the password themselves and hands it over (no email); their current sessions end.
+   * Only for accounts used at this gym alone (SHARED_ACCOUNT otherwise — use the emailed reset).
+   */
+  @Put(":id/password")
+  @RequiresPermission("tenant.security.manage")
+  setPassword(@Param("id", ParseUUIDPipe) id: string, @Body(new ZodPipe(setPasswordSchema)) body: SetPasswordInput) {
+    const t = requireTenant();
+    this.notSelf(id);
+    return this.db.run(async (tx) => {
+      await this.membership(tx, id);
+      await assertOnlyThisGym(tx, id, t.id);
+      await setChosenPassword(tx, id, body.password, body.mustChangePassword);
+      await this.audit.record(tx, { tenantId: t.id, action: "user.password_set", entityType: "user", entityId: id, data: { mustChangePassword: body.mustChangePassword } });
+      return { ok: true, mustChangePassword: body.mustChangePassword };
     });
   }
 

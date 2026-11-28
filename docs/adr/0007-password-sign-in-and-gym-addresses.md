@@ -21,6 +21,11 @@ and book.
   5 wrong passwords lock the account for 15 minutes; rate limits per email and IP. Tokens are HS256,
   issuer `gym-api`, 12 h, scoped to one gym (`tenant_id`) and carrying the session version.
 - The owner can reset someone's password (new emailed password) and disable their sign-in.
+- For now the owner can also **set a password themselves** (when creating the user, or later) and hand
+  it over — no email — optionally forcing a change at next sign-in. Allowed only for accounts used at
+  that gym alone and not platform staff (`app_user_other_gyms()`, SHARED_ACCOUNT otherwise): one
+  account can work at several gyms, and one gym's owner must not be able to take over a sign-in that
+  also opens another gym. Audited (`user.password_set`); ends the person's sessions.
 - Keycloak tokens are still accepted, so SSO (Pro/Enterprise) can come back without changing the API.
 
 **One address per gym.** `http://{slug}.localhost:3000` locally, `https://{slug}.<domain>` in

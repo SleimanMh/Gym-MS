@@ -96,13 +96,18 @@ export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 /** The access tree: ticked permissions (only the ones owners may hand out). */
 const accessSelection = z.array(z.enum(OVERRIDABLE_PERMISSIONS as [string, ...string[]])).max(OVERRIDABLE_PERMISSIONS.length);
 
-/** POST /v1/users — owner creates a sign-in; the system emails a generated password. */
+/**
+ * POST /v1/users — owner creates a sign-in. Without `password` the system emails a generated one;
+ * with it, the owner hands the password over themselves (no email), optionally to be changed at first sign-in.
+ */
 export const createUserSchema = z.object({
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
   email,
   role: z.enum(STAFF_ROLE_KEYS),
   permissions: accessSelection.optional(),
+  password: newPasswordSchema.optional(),
+  mustChangePassword: z.boolean().default(true),
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
@@ -111,3 +116,7 @@ export const userAccessSchema = z.object({ role: z.enum(STAFF_ROLE_KEYS), permis
 export type UserAccessInput = z.infer<typeof userAccessSchema>;
 
 export const userStatusSchema = z.object({ status: z.enum(["active", "disabled"]) });
+
+/** PUT /v1/users/:id/password — owner sets someone's password (accounts used only at this gym). */
+export const setPasswordSchema = z.object({ password: newPasswordSchema, mustChangePassword: z.boolean().default(true) });
+export type SetPasswordInput = z.infer<typeof setPasswordSchema>;

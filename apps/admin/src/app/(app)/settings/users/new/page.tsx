@@ -49,6 +49,31 @@ export default async function NewUserPage({ searchParams }: { searchParams: Prom
               <Input id="email" name="email" type="email" required dir="ltr" autoComplete="off" />
             </div>
           </div>
+          <fieldset className="rounded-2xl bg-sunken p-4">
+            <legend className="mb-2 px-1 text-sm font-medium">{t("users.pwHow")}</legend>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="radio" name="pwHow" value="email" defaultChecked className="size-4 accent-[var(--accent)]" />
+              {t("users.pwEmail")}
+            </label>
+            <label className="mt-2 flex items-center gap-2 text-sm">
+              <input type="radio" name="pwHow" value="set" className="size-4 accent-[var(--accent)]" />
+              {t("users.pwSet")}
+            </label>
+            <div className="mt-3 grid gap-3 ps-6 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="password">{t("users.newPw")}</Label>
+                <Input id="password" name="password" type="password" minLength={10} autoComplete="new-password" dir="ltr" />
+              </div>
+              <div>
+                <Label htmlFor="confirm">{t("users.confirmPw")}</Label>
+                <Input id="confirm" name="confirm" type="password" minLength={10} autoComplete="new-password" dir="ltr" />
+              </div>
+              <label className="flex items-start gap-2 text-sm sm:col-span-2">
+                <input type="checkbox" name="mustChange" defaultChecked className="mt-0.5 size-4 accent-[var(--accent)]" />
+                {t("users.forceChange")}
+              </label>
+            </div>
+          </fieldset>
         </AccessForm>
       </Card>
     </>

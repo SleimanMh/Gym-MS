@@ -2,13 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { KeyRound, UserCog } from "lucide-react";
 import { AccessForm } from "@/components/access-editor";
-import { Badge, Button, Card, Notice, PageHeader } from "@/components/ui";
+import { Badge, Button, Card, Input, Label, Notice, PageHeader } from "@/components/ui";
 import { ApiError, api, currentGym, getMe } from "@/lib/api";
 import { accessFormText } from "@/lib/access";
 import { relativeDays } from "@/lib/format";
 import { getT, type MessageKey } from "@/lib/i18n";
 import { gymUrl } from "@/lib/session";
-import { resetUserPassword, saveUserAccess, setUserStatus } from "../actions";
+import { resetUserPassword, saveUserAccess, setUserPassword, setUserStatus } from "../actions";
 
 interface UserDetail {
   id: string;
@@ -39,9 +39,14 @@ export default async function UserPage({ params, searchParams }: { params: Promi
     if (e instanceof ApiError && (e.status === 404 || e.status === 400)) notFound();
     throw e;
   }
-  const done = { created: t("users.created", { email: u.email }), added: t("users.added", { email: u.email }), saved: t("users.saved"), reset: t("users.resetDone") }[
-    sp.done as "created" | "added" | "saved" | "reset"
-  ];
+  const done = {
+    created: t("users.created", { email: u.email }),
+    createdSet: t("users.createdSet"),
+    added: t("users.added", { email: u.email }),
+    saved: t("users.saved"),
+    reset: t("users.resetDone"),
+    password: t("users.setPwDone"),
+  }[sp.done as "created" | "createdSet" | "added" | "saved" | "reset" | "password"];
 
   return (
     <>
@@ -105,6 +110,32 @@ export default async function UserPage({ params, searchParams }: { params: Promi
               </Link>
             )}
           </Card>
+
+          {!u.isSelf && (
+            <Card className="p-5">
+              <h2 className="font-semibold">{t("users.setPw")}</h2>
+              <p className="mb-3 text-xs text-muted">{t("users.setPwHelp")}</p>
+              <form action={setUserPassword} className="flex flex-col gap-3">
+                <input type="hidden" name="id" value={u.id} />
+                <div>
+                  <Label htmlFor="password">{t("users.newPw")}</Label>
+                  <Input id="password" name="password" type="password" required minLength={10} autoComplete="new-password" dir="ltr" />
+                </div>
+                <div>
+                  <Label htmlFor="confirm">{t("users.confirmPw")}</Label>
+                  <Input id="confirm" name="confirm" type="password" required minLength={10} autoComplete="new-password" dir="ltr" />
+                </div>
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" name="mustChange" defaultChecked className="mt-0.5 size-4 accent-[var(--accent)]" />
+                  {t("users.forceChange")}
+                </label>
+                <p className="text-xs text-faint">{t("users.pwRule")}</p>
+                <Button type="submit" variant="secondary">
+                  {t("users.setPw")}
+                </Button>
+              </form>
+            </Card>
+          )}
 
           {!u.isSelf && (
             <Card className="flex flex-col gap-2 p-5">
